@@ -151,6 +151,7 @@
          */
         function computePartnershipHistory(currentSchedule, allPlayerNames) {
             const history = {};
+            // Initialize history with 0 for all pairs
             allPlayerNames.forEach(p1 => {
                 history[p1] = {};
                 allPlayerNames.forEach(p2 => {
@@ -158,16 +159,19 @@
                 });
             });
 
+            // Populate history based on the current schedule
             currentSchedule.forEach(match => {
-                // Team A
+                // Team A (ensure pair is recorded regardless of order)
                 if (match.teamA.length === 2) {
-                    history[match.teamA[0]][match.teamA[1]]++;
-                    history[match.teamA[1]][match.teamA[0]]++;
+                    const [p1, p2] = match.teamA.sort();
+                    history[p1][p2]++;
+                    history[p2][p1]++;
                 }
                 // Team B
                 if (match.teamB.length === 2) {
-                    history[match.teamB[0]][match.teamB[1]]++;
-                    history[match.teamB[1]][match.teamB[0]]++;
+                    const [p1, p2] = match.teamB.sort();
+                    history[p1][p2]++;
+                    history[p2][p1]++;
                 }
             });
             return history;
@@ -195,7 +199,7 @@
             
             for (let i = 0; i < numMatches; i++) {
                 
-                // 1. Sort players by play count (least-played first), using random tie-breaking for fairness.
+                // 1. Sort players by play count (least-played first), using a consistent tie-breaking factor for fairness.
                 let playersByPlayCount = [...playerNames].sort((a, b) => {
                     const countA = playCounts[a];
                     const countB = playCounts[b];
@@ -204,8 +208,8 @@
                         return countA - countB; // Primary sort: lowest play count first
                     }
                     
-                    // Secondary sort: if counts are equal, break ties randomly to ensure fair rotation
-                    return Math.random() - 0.5; 
+                    // Secondary sort: if counts are equal, use name comparison for a deterministic tie-break.
+                    return a.localeCompare(b); 
                 });
                 
                 if (playersByPlayCount.length < 4) break;
@@ -224,36 +228,42 @@
                     { pairA: [P[0], P[3]], pairB: [P[1], P[2]] }  
                 ];
 
-                // 4. Score each pairing option based on the two-tiered priority system (Minimize repeat pairs, then total repeats).
+                // 4. Score each pairing option based on the two-tiered priority system 
+                //    (Minimize MAX repeat pair count, then total repeat count).
                 const scoredPairings = pairings.map(pairing => {
-                    const pairACount = history[pairing.pairA[0]][pairing.pairA[1]];
-                    const pairBCount = history[pairing.pairB[0]][pairing.pairB[1]];
+                    // Normalize the pair names for lookup (e.g., "Alice & Bob" is the same as "Bob & Alice")
+                    const teamA_sorted = [pairing.pairA[0], pairing.pairA[1]].sort();
+                    const teamB_sorted = [pairing.pairB[0], pairing.pairB[1]].sort();
 
-                    // Priority 1: Minimize the number of pairs that are repeats (0, 1, or 2)
-                    const numRepeatPairs = (pairACount > 0 ? 1 : 0) + (pairBCount > 0 ? 1 : 0);
+                    const countA = history[teamA_sorted[0]][teamA_sorted[1]];
+                    const countB = history[teamB_sorted[0]][teamB_sorted[1]];
+
+                    // Priority 1: Find the pairing that has the minimum MAX partnership count.
+                    // This aggressively prevents any single pair from repeating excessively.
+                    const maxPartnershipCount = Math.max(countA, countB);
                     
-                    // Priority 2: If the number of repeat pairs is tied, minimize the total sum of repeats
-                    const totalRepeatCount = pairACount + pairBCount;
+                    // Priority 2: Find the pairing that has the minimum TOTAL partnership count.
+                    const totalPartnershipCount = countA + countB;
                     
                     return {
                         ...pairing,
-                        numRepeatPairs,
-                        totalRepeatCount
+                        maxPartnershipCount,
+                        totalPartnershipCount
                     };
                 });
 
                 // 5. Sort to find the best pairing based on the priorities.
                 scoredPairings.sort((a, b) => {
-                    // Sort by Priority 1: fewest repeat pairs first
-                    if (a.numRepeatPairs !== b.numRepeatPairs) {
-                        return a.numRepeatPairs - b.numRepeatPairs;
+                    // Sort by Priority 1: lowest MAX partnership count first (e.g., 0 is best)
+                    if (a.maxPartnershipCount !== b.maxPartnershipCount) {
+                        return a.maxPartnershipCount - b.maxPartnershipCount;
                     }
-                    // Sort by Priority 2: lowest total repeats first
-                    if (a.totalRepeatCount !== b.totalRepeatCount) {
-                        return a.totalRepeatCount - b.totalRepeatCount;
+                    // Sort by Priority 2: lowest TOTAL partnership count first
+                    if (a.totalPartnershipCount !== b.totalPartnershipCount) {
+                        return a.totalPartnershipCount - b.totalPartnershipCount;
                     }
-                    // Random tie-breaker for equally optimal pairings
-                    return Math.random() - 0.5;
+                    // Final Tie-breaker: Use a consistent factor (first player name)
+                    return a.pairA[0].localeCompare(b.pairA[0]);
                 });
 
                 const bestPairing = scoredPairings[0];
@@ -438,6 +448,7 @@
                 hintDiv.innerHTML = '<p class="text-red-500 font-medium mt-1">Need 4 or more players to generate a match.</p>';
             } else {
                 // Formula for minimum matches needed for each player to partner with all others once: ceil( N * (N - 1) / 4 )
+                // N=6: ceil( 6 * 5 / 4 ) = ceil( 7.5 ) = 8 matches
                 const requiredMatches = Math.ceil(N * (N - 1) / 4);
                 
                 hintDiv.innerHTML = `
