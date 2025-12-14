@@ -14,19 +14,21 @@
         // Ensure console logging for debugging is enabled
         setLogLevel('debug');
 
-        // --- START OF NETLIFY CONFIG ---
-        const firebaseConfig = {
-          apiKey: "AIzaSyAZ7oJJsWzgU4X0va6PGsS4kZ8l6HvMn88",
-          authDomain: "pickleballmatchup.firebaseapp.com",
-          projectId: "pickleballmatchup",
-          storageBucket: "pickleballmatchup.firebasestorage.app",
-          messagingSenderId: "413178065158",
-          appId: "1:413178065158:web:c98dbd1f80bc8dadfbae87",
-          measurementId: "G-DZ588D1T59"
-        };
-        const appId = firebaseConfig.appId;
-        const initialAuthToken = null; 
-        // --- END OF NETLIFY CONFIG ---
+// --- START OF NETLIFY/VERCEL CONFIG ---
+const firebaseConfig = {
+    // 🛑 IMPORTANT: This placeholder is replaced by the environment variable during deployment.
+    // It prevents your secret key from being stored in the public GitHub repo.
+    apiKey: "VITE_PICKLEBALL_API_KEY_PLACEHOLDER", 
+    authDomain: "pickleballmatchup.firebaseapp.com",
+    projectId: "pickleballmatchup",
+    storageBucket: "pickleballmatchup.firebasestorage.app",
+    messagingSenderId: "413178065158",
+    appId: "1:413178065158:web:c98dbd1f80bc8dadfbae87",
+    measurementId: "G-DZ588D1T59"
+};
+const appId = firebaseConfig.appId;
+const initialAuthToken = null;
+// --- END OF NETLIFY/VERCEL CONFIG ---
 
         
         let db;
