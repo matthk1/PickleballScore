@@ -1,0 +1,13 @@
+# Ignore local environment variables file (contains secrets)
+.env
+.env.txt
+
+# Ignore npm package directory (large, generated files)
+node_modules
+
+# Ignore Vite's build output directory
+dist
+
+# Ignore editor and OS files
+.DS_Store
+*.log
