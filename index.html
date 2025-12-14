@@ -18,7 +18,7 @@
 const firebaseConfig = {
     // 🛑 IMPORTANT: This placeholder is replaced by the environment variable during deployment.
     // It prevents your secret key from being stored in the public GitHub repo.
-    apiKey: "VITE_PICKLEBALL_API_KEY_PLACEHOLDER", 
+    apiKey: import.meta.env.VITE_PICKLEBALL_API_KEY, 
     authDomain: "pickleballmatchup.firebaseapp.com",
     projectId: "pickleballmatchup",
     storageBucket: "pickleballmatchup.firebasestorage.app",
