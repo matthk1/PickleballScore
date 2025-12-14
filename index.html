@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pickleball Doubles Scheduler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        // Firebase V11 Imports (Using stable CDN paths)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+        
+        // Ensure console logging for debugging is enabled
+        setLogLevel('debug');
+
+        // --- START OF NETLIFY CONFIG ---
+        const firebaseConfig = {
+          apiKey: "AIzaSyAZ7oJJsWzgU4X0va6PGsS4kZ8l6HvMn88",
+          authDomain: "pickleballmatchup.firebaseapp.com",
+          projectId: "pickleballmatchup",
+          storageBucket: "pickleballmatchup.firebasestorage.app",
+          messagingSenderId: "413178065158",
+          appId: "1:413178065158:web:c98dbd1f80bc8dadfbae87",
+          measurementId: "G-DZ588D1T59"
+        };
+        const appId = firebaseConfig.appId;
+        const initialAuthToken = null; 
+        // --- END OF NETLIFY CONFIG ---
+
+        
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        // Application State
+        window.appState = {
+            players: [], // [{id, name}, ...]
+            numMatches: 1,
+            schedule: [], // [{matchId, teamA, teamB, scoreA, scoreB}, ...]
+            standings: {}, // {playerName: totalScore, ...}
+            loading: true,
+            error: null
+        };
+
+        // --- Firebase Initialization and Auth ---
+
+        async function initFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    throw new Error("Firebase configuration is missing.");
+                }
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Default to Anonymous Sign-in for public deployment
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        document.getElementById('user-id').textContent = userId;
+                        loadPlayers(); // Load data once authenticated
+                    } else {
+                        // Sign in anonymously if not already signed in
+                        signInAnonymously(auth);
+                        userId = null;
+                        isAuthReady = true;
+                        document.getElementById('user-id').textContent = 'Anonymous (reloading)';
+                    }
+                });
+
+            } catch (err) {
+                console.error("Firebase Initialization Error:", err);
+                document.getElementById('status-message').textContent = `Initialization Error: ${err.message}`;
+            }
+        }
+
+        // --- Firestore Data Operations ---
+
+        function getPlayersCollectionRef() {
+            if (!userId) {
+                throw new Error("User not authenticated.");
+            }
+            return collection(db, `artifacts/${appId}/users/${userId}/pickleball_players`);
+        }
+
+        async function loadPlayers() {
+            if (!isAuthReady || !userId) return;
+
+            try {
+                onSnapshot(getPlayersCollectionRef(), (snapshot) => {
+                    const newPlayers = [];
+                    snapshot.forEach(doc => {
+                        newPlayers.push({ id: doc.id, name: doc.data().name });
+                    });
+                    window.appState.players = newPlayers;
+                    renderPlayerList(); 
+                    window.appState.loading = false;
+                    // Once loading is complete, clear the message
+                    document.getElementById('status-message').textContent = '';
+                }, (error) => {
+                    console.error("Error loading players:", error);
+                    document.getElementById('status-message').textContent = `Data Load Error: ${error.message}`;
+                });
+            } catch (e) {
+                console.error("Error setting up player listener:", e);
+                window.appState.error = e.message;
+            }
+        }
+
+        async function savePlayer(name) {
+            if (!isAuthReady || !userId) {
+                appState.error = "Authentication not ready. Cannot save.";
+                renderError();
+                return;
+            }
+            if (window.appState.players.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+                appState.error = "Player with this name already exists.";
+                renderError();
+                return;
+            }
+            try {
+                await addDoc(getPlayersCollectionRef(), { name: name.trim() });
+            } catch (e) {
+                console.error("Error saving player:", e);
+                appState.error = `Could not save player: ${e.message}`;
+                renderError();
+            }
+        }
+
+        async function deletePlayer(playerId) {
+            if (!isAuthReady || !userId) return;
+            try {
+                await deleteDoc(doc(getPlayersCollectionRef(), playerId));
+            } catch (e) {
+                console.error("Error deleting player:", e);
+                appState.error = `Could not delete player: ${e.message}`;
+                renderError();
+            }
+        }
+
+        // --- Core Application Logic ---
+
+        /**
+         * Computes the partnership history based on the schedule generated so far.
+         * @param {Array} currentSchedule - The matches scheduled so far.
+         * @param {Array} allPlayerNames - All players.
+         * @returns {Object} A nested map of player A -> player B -> partnership count.
+         */
+        function computePartnershipHistory(currentSchedule, allPlayerNames) {
+            const history = {};
+            allPlayerNames.forEach(p1 => {
+                history[p1] = {};
+                allPlayerNames.forEach(p2 => {
+                    if (p1 !== p2) history[p1][p2] = 0;
+                });
+            });
+
+            currentSchedule.forEach(match => {
+                // Team A
+                if (match.teamA.length === 2) {
+                    history[match.teamA[0]][match.teamA[1]]++;
+                    history[match.teamA[1]][match.teamA[0]]++;
+                }
+                // Team B
+                if (match.teamB.length === 2) {
+                    history[match.teamB[0]][match.teamB[1]]++;
+                    history[match.teamB[1]][match.teamB[0]]++;
+                }
+            });
+            return history;
+        }
+
+
+        /**
+         * Generates a match schedule, minimizing repeat partnerships and ensuring even playtime distribution.
+         */
+        window.generateSchedule = function() {
+            const numMatches = parseInt(document.getElementById('num-matches').value, 10) || 1;
+            window.appState.numMatches = numMatches; 
+
+            const { players } = window.appState;
+            const playerNames = players.map(p => p.name);
+
+            if (playerNames.length < 4) {
+                window.appState.error = "You need at least 4 players to schedule a doubles match.";
+                renderError();
+                return;
+            }
+
+            const playCounts = playerNames.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
+            const newSchedule = [];
+            
+            for (let i = 0; i < numMatches; i++) {
+                
+                // 1. Sort players by play count (least-played first), using random tie-breaking for fairness.
+                let playersByPlayCount = [...playerNames].sort((a, b) => {
+                    const countA = playCounts[a];
+                    const countB = playCounts[b];
+
+                    if (countA !== countB) {
+                        return countA - countB; // Primary sort: lowest play count first
+                    }
+                    
+                    // Secondary sort: if counts are equal, break ties randomly to ensure fair rotation
+                    return Math.random() - 0.5; 
+                });
+                
+                if (playersByPlayCount.length < 4) break;
+                
+                // Select the 4 players guaranteed to be the least-played
+                const playersForMatch = playersByPlayCount.slice(0, 4);
+                
+                // 2. Compute partnership history based on schedule generated so far.
+                const history = computePartnershipHistory(newSchedule, playerNames);
+
+                // 3. Define all 3 possible pairings for the 4 players (P1, P2, P3, P4).
+                const P = playersForMatch;
+                const pairings = [
+                    { pairA: [P[0], P[1]], pairB: [P[2], P[3]] }, 
+                    { pairA: [P[0], P[2]], pairB: [P[1], P[3]] }, 
+                    { pairA: [P[0], P[3]], pairB: [P[1], P[2]] }  
+                ];
+
+                // 4. Score each pairing option based on the two-tiered priority system (Minimize repeat pairs, then total repeats).
+                const scoredPairings = pairings.map(pairing => {
+                    const pairACount = history[pairing.pairA[0]][pairing.pairA[1]];
+                    const pairBCount = history[pairing.pairB[0]][pairing.pairB[1]];
+
+                    // Priority 1: Minimize the number of pairs that are repeats (0, 1, or 2)
+                    const numRepeatPairs = (pairACount > 0 ? 1 : 0) + (pairBCount > 0 ? 1 : 0);
+                    
+                    // Priority 2: If the number of repeat pairs is tied, minimize the total sum of repeats
+                    const totalRepeatCount = pairACount + pairBCount;
+                    
+                    return {
+                        ...pairing,
+                        numRepeatPairs,
+                        totalRepeatCount
+                    };
+                });
+
+                // 5. Sort to find the best pairing based on the priorities.
+                scoredPairings.sort((a, b) => {
+                    // Sort by Priority 1: fewest repeat pairs first
+                    if (a.numRepeatPairs !== b.numRepeatPairs) {
+                        return a.numRepeatPairs - b.numRepeatPairs;
+                    }
+                    // Sort by Priority 2: lowest total repeats first
+                    if (a.totalRepeatCount !== b.totalRepeatCount) {
+                        return a.totalRepeatCount - b.totalRepeatCount;
+                    }
+                    // Random tie-breaker for equally optimal pairings
+                    return Math.random() - 0.5;
+                });
+
+                const bestPairing = scoredPairings[0];
+
+
+                // 6. Create the match object and update play counts.
+                const teamA = bestPairing.pairA;
+                const teamB = bestPairing.pairB;
+                
+                [...teamA, ...teamB].forEach(name => playCounts[name]++);
+                
+                newSchedule.push({
+                    matchId: i + 1,
+                    teamA: teamA, 
+                    teamB: teamB,
+                    scoreA: null,
+                    scoreB: null
+                });
+            }
+
+            window.appState.schedule = newSchedule;
+            window.appState.standings = {}; 
+            window.appState.error = null;
+            renderSchedule();
+            calculateWinner();
+        }
+
+        window.recordScore = function(matchId) {
+            const matchIndex = matchId - 1;
+            const match = window.appState.schedule[matchIndex];
+            if (!match) return;
+
+            const inputA = document.getElementById(`score-a-${matchId}`).value;
+            const inputB = document.getElementById(`score-b-${matchId}`).value;
+
+            const scoreA = parseInt(inputA, 10);
+            const scoreB = parseInt(inputB, 10);
+
+            if (isNaN(scoreA) || isNaN(scoreB) || scoreA < 0 || scoreB < 0) {
+                window.appState.error = "Scores must be non-negative numbers.";
+                renderError();
+                return;
+            }
+
+            match.scoreA = scoreA;
+            match.scoreB = scoreB;
+            
+            renderMatchRow(match); 
+            calculateWinner();
+        }
+
+        /**
+         * Calculates total scores and determines the daily winner using AVERAGE score for fairness.
+         */
+        window.calculateWinner = function() {
+            const standings = {};
+            const { players, schedule } = window.appState;
+            const playerNames = players.map(p => p.name);
+            
+            // Initialize standings for all known players to track score, matches played, and average
+            playerNames.forEach(name => {
+                standings[name] = { score: 0, matches: 0, average: 0 };
+            });
+
+            schedule.forEach(match => {
+                const { teamA, teamB, scoreA, scoreB } = match;
+
+                // Only count matches with valid scores
+                if (scoreA !== null && scoreB !== null) {
+                    const updatePlayerStats = (playerName, score) => {
+                        if (standings.hasOwnProperty(playerName)) {
+                            standings[playerName].score += score;
+                            standings[playerName].matches += 1; // Increment match count
+                        } else {
+                            standings[playerName] = { score: score, matches: 1, average: 0 };
+                        }
+                    };
+
+                    // Update stats for Team A
+                    teamA.forEach(playerName => {
+                        updatePlayerStats(playerName, scoreA);
+                    });
+
+                    // Update stats for Team B
+                    teamB.forEach(playerName => {
+                        updatePlayerStats(playerName, scoreB);
+                    });
+                }
+            });
+
+            // Calculate the average score for each player
+            Object.keys(standings).forEach(name => {
+                const stats = standings[name];
+                if (stats.matches > 0) {
+                    // Calculate average score per match
+                    stats.average = (stats.score / stats.matches); 
+                }
+            });
+
+            window.appState.standings = standings;
+            renderStandings();
+        }
+
+        /**
+         * Shares the generated match schedule using the Web Share API or falls back to clipboard.
+         */
+        window.shareSchedule = async function() {
+            const { schedule } = window.appState;
+
+            if (schedule.length === 0) {
+                window.appState.error = "Generate a schedule first to share it.";
+                renderError();
+                return;
+            }
+
+            // 1. Format the schedule into a readable string
+            const scheduleText = schedule.map(match => {
+                const teamA = match.teamA.join(' & ');
+                const teamB = match.teamB.join(' & ');
+                let score = '';
+
+                if (match.scoreA !== null && match.scoreB !== null) {
+                    score = ` (${match.scoreA} - ${match.scoreB})`;
+                }
+                
+                return `Match ${match.matchId}: ${teamA} vs ${teamB}${score}`;
+            }).join('\n');
+
+            const fullShareText = `--- Pickleball Match Schedule ---\n\n${scheduleText}\n\nGenerated by the Pickleball Doubles Scheduler.`;
+
+            // 2. Try Web Share API (native sharing)
+            const shareStatusEl = document.getElementById('share-status');
+            shareStatusEl.textContent = ''; // Clear previous message
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: 'Pickleball Match Schedule',
+                        text: fullShareText
+                    });
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        console.error('Error sharing:', error);
+                        window.appState.error = "Could not share schedule.";
+                        renderError();
+                    }
+                    // AbortError is usually a user closing the dialog, which is fine
+                }
+            } else {
+                // 3. Fallback: Copy to clipboard
+                try {
+                    await navigator.clipboard.writeText(fullShareText);
+                    shareStatusEl.textContent = 'Schedule copied to clipboard! Share it with your friends.';
+                    setTimeout(() => shareStatusEl.textContent = '', 4000);
+                } catch (err) {
+                    console.error('Failed to copy text:', err);
+                    window.appState.error = "Sharing not supported. Failed to copy to clipboard.";
+                    renderError();
+                }
+            }
+        }
+        
+        // --- UI Rendering Functions ---
+
+        function renderError() {
+            const errorDiv = document.getElementById('error-message');
+            if (window.appState.error) {
+                errorDiv.classList.remove('hidden');
+                errorDiv.textContent = `Error: ${window.appState.error}`;
+                setTimeout(() => {
+                    window.appState.error = null;
+                    errorDiv.classList.add('hidden');
+                }, 5000);
+            }
+        }
+        
+        function updateMatchHint() {
+            const N = window.appState.players.length;
+            const hintDiv = document.getElementById('match-hint');
+
+            if (N < 4) {
+                hintDiv.innerHTML = '<p class="text-red-500 font-medium mt-1">Need 4 or more players to generate a match.</p>';
+            } else {
+                // Formula for minimum matches needed for each player to partner with all others once: ceil( N * (N - 1) / 4 )
+                const requiredMatches = Math.ceil(N * (N - 1) / 4);
+                
+                hintDiv.innerHTML = `
+                    <p class="text-sm text-gray-600 mt-2">
+                        Recommendation for maximum partner variety: 
+                        <span class="font-bold text-indigo-700">${requiredMatches}</span> matches (or more) 
+                        is typically needed for each player to partner with all ${N-1} others once.
+                    </p>
+                `;
+            }
+        }
+
+
+        function renderPlayerList() {
+            const playerListDiv = document.getElementById('player-list');
+            playerListDiv.innerHTML = '';
+            
+            document.getElementById('player-count').textContent = window.appState.players.length; 
+            
+            if (window.appState.players.length === 0) {
+                playerListDiv.innerHTML = '<p class="text-gray-500 italic">No players added yet. Add players above to save them for the next time.</p>';
+            }
+
+            window.appState.players.forEach(player => {
+                const playerEl = document.createElement('div');
+                playerEl.className = 'flex items-center justify-between p-2 bg-white rounded-lg shadow-sm mb-2 transition hover:bg-red-50';
+                playerEl.innerHTML = `
+                    <span class="text-gray-800 font-medium">${player.name}</span>
+                    <button data-id="${player.id}" class="delete-player-btn text-red-500 hover:text-red-700 p-1 rounded-full transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
+                            <path d="M3 6h18"/>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                        </svg>
+                    </button>
+                `;
+                playerListDiv.appendChild(playerEl);
+            });
+
+            document.querySelectorAll('.delete-player-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const playerId = e.currentTarget.getAttribute('data-id');
+                    deletePlayer(playerId);
+                });
+            });
+            
+            updateMatchHint();
+        }
+        
+        function renderMatchRow(match) {
+            const matchId = match.matchId;
+            let matchEl = document.getElementById(`match-row-${matchId}`);
+            const isNew = !matchEl;
+
+            if (isNew) {
+                matchEl = document.createElement('div');
+                matchEl.id = `match-row-${matchId}`;
+                matchEl.className = 'bg-white p-4 rounded-xl shadow-md mb-4 flex flex-col md:flex-row items-center justify-between border border-gray-100';
+            }
+
+            const teamAStr = match.teamA.join(' & ');
+            const teamBStr = match.teamB.join(' & ');
+            
+            let winnerClassA = '';
+            let winnerClassB = '';
+            if (match.scoreA !== null && match.scoreB !== null && match.scoreA !== match.scoreB) {
+                if (match.scoreA > match.scoreB) {
+                    winnerClassA = 'font-bold text-green-700 bg-green-100 px-2 py-1 rounded';
+                } else { 
+                    winnerClassB = 'font-bold text-green-700 bg-green-100 px-2 py-1 rounded';
+                }
+            }
+            
+            const scoreValueA = match.scoreA !== null ? match.scoreA : '';
+            const scoreValueB = match.scoreB !== null ? match.scoreB : '';
+
+            matchEl.innerHTML = `
+                <div class="w-full md:w-3/5 mb-3 md:mb-0">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-1">Match ${matchId}</h4>
+                    <p class="${winnerClassA}">Team A: ${teamAStr}</p>
+                    <p class="${winnerClassB}">Team B: ${teamBStr}</p>
+                </div>
+                <div class="w-full md:w-2/5 flex items-center space-x-2">
+                    <input type="number" id="score-a-${matchId}" value="${scoreValueA}" min="0" onchange="recordScore(${matchId})" class="w-1/4 p-2 border border-gray-300 rounded-lg text-center focus:border-indigo-500" placeholder="A Score">
+                    <span class="text-xl font-bold text-gray-500">-</span>
+                    <input type="number" id="score-b-${matchId}" value="${scoreValueB}" min="0" onchange="recordScore(${matchId})" class="w-1/4 p-2 border border-gray-300 rounded-lg text-center focus:border-indigo-500" placeholder="B Score">
+                    <button onclick="recordScore(${matchId})" class="w-2/4 bg-indigo-600 text-white p-2 rounded-lg font-medium hover:bg-indigo-700 transition duration-150 shadow-md">Update Score</button>
+                </div>
+            `;
+            
+            if (isNew) {
+                 document.getElementById('schedule-container').appendChild(matchEl);
+            }
+        }
+
+        function renderSchedule() {
+            const container = document.getElementById('schedule-container');
+            container.innerHTML = '';
+            
+            if (window.appState.schedule.length === 0) {
+                 container.innerHTML = '<p class="text-gray-500 italic">Generate a schedule to see the matches.</p>';
+            }
+            
+            window.appState.schedule.forEach(match => {
+                renderMatchRow(match);
+            });
+        }
+
+        /**
+         * Renders the standings sorted by Average Score per Match.
+         */
+        function renderStandings() {
+            const standingsDiv = document.getElementById('standings-container');
+            const { standings } = window.appState;
+            
+            // Convert standings object to an array for sorting, including the player name
+            const sortedStandings = Object.entries(standings)
+                .map(([name, stats]) => ({ name, ...stats }))
+                // Sort primarily by average score (highest first), then by total score for tie-breaking
+                .sort((a, b) => {
+                    if (b.average !== a.average) {
+                        return b.average - a.average;
+                    }
+                    return b.score - a.score;
+                });
+
+            // Check if there are any scored matches
+            const hasScores = sortedStandings.some(stats => stats.score > 0);
+
+            if (sortedStandings.length === 0 || !hasScores) {
+                standingsDiv.innerHTML = '<p class="text-gray-500 italic">Enter match scores to calculate the standings.</p>';
+                return;
+            }
+
+            const dailyWinner = sortedStandings.length > 0 ? sortedStandings[0].name : '';
+            const maxAverage = sortedStandings.length > 0 ? sortedStandings[0].average.toFixed(2) : 0;
+            
+            standingsDiv.innerHTML = `
+                <div class="text-center mb-4 p-4 bg-yellow-100 border-l-4 border-yellow-500 rounded-lg shadow-inner">
+                    <h3 class="text-xl font-bold text-yellow-700">Daily Winner: ${dailyWinner} (Avg. ${maxAverage} pts/match)</h3>
+                </div>
+                <div class="flex justify-between items-center px-3 pb-2 border-b border-gray-200">
+                    <span class="text-sm font-semibold text-gray-500">Player</span>
+                    <span class="text-sm font-semibold text-gray-500 text-right">Score (Matches | Avg)</span>
+                </div>
+                <ul class="space-y-2">
+                    ${sortedStandings.map((stats, index) => {
+                        const scoreDisplay = `${stats.score} total (${stats.matches} | ${stats.average.toFixed(2)})`;
+                        const isWinner = index === 0;
+                        return `
+                            <li class="flex justify-between items-center p-3 rounded-lg shadow-sm ${isWinner ? 'bg-yellow-50 border-yellow-500 border-l-4' : 'bg-gray-50'}">
+                                <span class="text-lg ${isWinner ? 'font-extrabold text-yellow-800' : 'font-medium text-gray-700'}">${index + 1}. ${stats.name}</span>
+                                <span class="${isWinner ? 'font-bold text-lg text-yellow-800' : 'text-md font-semibold text-gray-800'} text-right">${scoreDisplay}</span>
+                            </li>
+                        `;
+                    }).join('')}
+                </ul>
+            `;
+        }
+        
+        /**
+         * Main setup function
+         */
+        window.onload = function() {
+            initFirebase();
+            
+            // Event listener for adding players
+            document.getElementById('add-player-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const input = document.getElementById('new-player-name');
+                const name = input.value.trim();
+                if (name) {
+                    savePlayer(name);
+                    input.value = ''; // Clear input field
+                } else {
+                     window.appState.error = "Player name cannot be empty.";
+                     renderError();
+                }
+            });
+
+            // Event listener for match count input 
+            document.getElementById('num-matches').addEventListener('change', (e) => {
+                const value = parseInt(e.target.value, 10);
+                window.appState.numMatches = value > 0 ? value : 1;
+                e.target.value = window.appState.numMatches; // Ensure minimum 1
+            });
+            
+            renderSchedule();
+            renderStandings();
+            updateMatchHint(); // Initial hint render
+        };
+
+        // Make functions globally available for inline HTML events
+        window.recordScore = recordScore;
+        window.generateSchedule = generateSchedule;
+        window.deletePlayer = deletePlayer;
+        window.shareSchedule = shareSchedule;
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .header-bg {
+            background: linear-gradient(135deg, #4f46e5 0%, #1e3a8a 100%);
+        }
+        button:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        button {
+            transition: all 0.2s ease;
+        }
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type="number"] {
+            -moz-appearance: textfield;
+        }
+        .shadow-custom {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="header-bg p-4 text-white shadow-lg">
+        <div class="container mx-auto">
+            <h1 class="text-3xl font-extrabold flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8 mr-3 transform rotate-45">
+                    <rect x="2" y="7" width="20" height="15" rx="3" ry="3"/>
+                    <path d="M12 2v5"/>
+                </svg>
+                Pickleball Doubles Scheduler
+            </h1>
+            <p class="text-sm mt-1 opacity-80">User ID: <span id="user-id" class="font-mono">Loading...</span></p>
+        </div>
+    </div>
+    
+    <div class="container mx-auto p-4 md:p-8">
+        <div id="status-message" class="text-center text-indigo-600 font-semibold mb-4">Initializing application...</div>
+        <div id="error-message" class="hidden p-3 mb-4 bg-red-100 text-red-700 border-l-4 border-red-500 rounded font-medium"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <div class="lg:col-span-1 space-y-8">
+                
+                <div class="bg-white p-6 rounded-xl shadow-custom border border-gray-100">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">1. Player Management</h2>
+                    
+                    <form id="add-player-form" class="flex space-x-2 mb-4">
+                        <input type="text" id="new-player-name" placeholder="Enter player name" class="flex-grow p-2 border border-gray-300 rounded-lg focus:border-indigo-500" required>
+                        <button type="submit" class="bg-indigo-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-600 shadow-md">Add</button>
+                    </form>
+
+                    <h3 class="font-semibold text-gray-700 mb-2">Saved Players (<span id="player-count">0</span>)</h3>
+                    <div id="player-list" class="max-h-60 overflow-y-auto pr-2">
+                        </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-custom border border-gray-100">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">2. Match Setup</h2>
+                    
+                    <div class="mb-2">
+                        <label for="num-matches" class="block text-sm font-medium text-gray-700 mb-1">Total Matches for the Day (4 players per match)</label>
+                        <input type="number" id="num-matches" value="1" min="1" class="w-full p-2 border border-gray-300 rounded-lg focus:border-indigo-500">
+                        <div id="match-hint"></div> 
+                    </div>
+                    
+                    <button onclick="generateSchedule()" class="w-full bg-green-600 text-white p-3 rounded-lg font-bold text-lg hover:bg-green-700 transition shadow-lg">
+                        GENERATE SCHEDULE
+                    </button>
+                </div>
+                
+                <div class="bg-white p-6 rounded-xl shadow-custom border border-gray-100">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">5. Daily Standings (Sorted by Average Score)</h2>
+                    <div id="standings-container">
+                        </div>
+                </div>
+
+            </div>
+
+            <div class="lg:col-span-2">
+                <div class="bg-white p-6 rounded-xl shadow-custom border border-gray-100">
+                    <h2 class="text-xl font-bold text-gray-800 mb-4 border-b pb-2 flex justify-between items-center">
+                        <span>3. & 4. Match Schedule and Score Input</span>
+                        <button onclick="shareSchedule()" class="bg-blue-500 text-white text-sm px-3 py-1.5 rounded-lg font-medium hover:bg-blue-600 transition shadow-md flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 mr-1">
+                                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path>
+                                <polyline points="16 6 12 2 8 6"></polyline>
+                                <line x1="12" y1="2" x2="12" y2="15"></line>
+                            </svg>
+                            Share Schedule
+                        </button>
+                    </h2>
+                    <div id="share-status" class="text-green-600 font-medium text-sm mb-2 h-4"></div>
+                    <div id="schedule-container">
+                        </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</body>
+</html>
