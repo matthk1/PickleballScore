@@ -1,4 +1,3 @@
-
 const CACHE_NAME = "pickleball-pwa-v1";
 
 const ASSETS_TO_CACHE = [
@@ -33,7 +32,7 @@ self.addEventListener("install", event => {
         console.error('Failed to pre-cache assets:', error);
       })
   );
-  self.skipWaiting(); 
+  self.skipWaiting(); // Forces the Service Worker to activate immediately
 });
 
 // 2. FETCH: Strategy = Cache First, then Fallback to Network
@@ -41,15 +40,17 @@ self.addEventListener("fetch", event => {
   event.respondWith(
     caches.match(event.request)
       .then(response => {
+        // Cache hit - return the cached response
         if (response) {
           return response;
         }
+        // Cache miss - fetch from the network
         return fetch(event.request);
       })
   );
 });
 
-// 3. ACTIVATE: Clean up old caches
+// 3. ACTIVATE: Clean up old caches (Crucial for version updates)
 self.addEventListener('activate', event => {
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
