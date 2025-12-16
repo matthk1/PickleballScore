@@ -1,4 +1,4 @@
-const CACHE_NAME = "pickleball-pwa-v1";
+const CACHE_NAME = "pickleball-pwa-v2";
 
 const ASSETS_TO_CACHE = [
   // --- CORE FILES & LOCAL ASSETS ---
@@ -16,8 +16,7 @@ const ASSETS_TO_CACHE = [
   "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js",
 
   // --- BUILD ASSETS ---
-  // If your build creates files in 'dist', add their final paths here 
-  // e.g., '/assets/main.css', '/assets/app.js'
+ "/assets/index-BgsxrxEL.js"
 ];
 
 // 1. INSTALL: Pre-cache all defined assets
