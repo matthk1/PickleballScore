@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pickleball Doubles Scheduler</title>
+    <title>Pickleball Pro Scheduler</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
@@ -50,38 +50,27 @@
         function updateMatchHint() {
             const n = window.appState.players.length;
             const hintDiv = document.getElementById('match-hint');
-            if (n < 4) {
-                hintDiv.innerHTML = `<p class="text-amber-600 text-[11px] mt-2 italic font-medium">Add at least 4 players to see suggestions.</p>`;
-                return;
-            }
+            if (n < 4) return;
             const suggestedMatches = Math.ceil((n * (n - 1)) / 4);
-            hintDiv.innerHTML = `
-                <p class="text-[11px] text-gray-500 mt-2 leading-tight">
-                    Recommendation for maximum partner variety: 
-                    <span class="font-black text-indigo-600">${suggestedMatches}</span> matches is typically needed for each player to partner with all ${n-1} others once.
-                </p>`;
+            hintDiv.innerHTML = `<p class="text-sm text-gray-500 mt-2 italic">Suggestion: Generate <span class="text-indigo-600 font-bold">${suggestedMatches}</span> matches.</p>`;
         }
 
         window.generateSchedule = function() {
             const rounds = parseInt(document.getElementById('num-matches').value) || 1;
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
             const playerNames = window.appState.players.map(p => p.name);
-            if (playerNames.length < 4) return alert("Need at least 4 players.");
+            if (playerNames.length < 4) return alert("Need 4+ players.");
 
             const playCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
+            const waitCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
             const partnerHistory = {};
             const newSchedule = [];
-            let lastRoundPlayers = [];
 
             for (let r = 1; r <= rounds; r++) {
-                let currentRoundPlayers = [];
-                // Sort by: 1. Play Count, 2. Rest Status, 3. Random
+                let roundParticipants = [];
                 let available = [...playerNames].sort((a,b) => {
-                    if (playCounts[a] !== playCounts[b]) return playCounts[a] - playCounts[b];
-                    const aRested = !lastRoundPlayers.includes(a);
-                    const bRested = !lastRoundPlayers.includes(b);
-                    if (aRested !== bRested) return aRested ? -1 : 1;
-                    return Math.random() - 0.5;
+                    if (waitCounts[b] !== waitCounts[a]) return waitCounts[b] - waitCounts[a];
+                    return playCounts[a] - playCounts[b] || Math.random() - 0.5;
                 });
                 
                 for (let c = 1; c <= courts; c++) {
@@ -92,19 +81,18 @@
                         { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
                         { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
                     ];
-                    options.forEach(opt => {
-                        const pair1 = opt.t1.sort().join('&');
-                        const pair2 = opt.t2.sort().join('&');
-                        opt.score = (partnerHistory[pair1] || 0) + (partnerHistory[pair2] || 0);
+                    options.forEach(o => {
+                        const pair1 = o.t1.sort().join('&');
+                        const pair2 = o.t2.sort().join('&');
+                        o.score = (partnerHistory[pair1] || 0) + (partnerHistory[pair2] || 0);
                     });
                     const best = options.sort((a,b) => a.score - b.score)[0];
                     partnerHistory[best.t1.sort().join('&')] = (partnerHistory[best.t1.sort().join('&')] || 0) + 1;
                     partnerHistory[best.t2.sort().join('&')] = (partnerHistory[best.t2.sort().join('&')] || 0) + 1;
-                    
-                    [...best.t1, ...best.t2].forEach(p => { playCounts[p]++; currentRoundPlayers.push(p); });
+                    [...best.t1, ...best.t2].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
                     newSchedule.push({ id: `${r}-${c}`, round: r, court: c, teamA: best.t1, teamB: best.t2, scoreA: null, scoreB: null });
                 }
-                lastRoundPlayers = currentRoundPlayers;
+                playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
             }
             window.appState.schedule = newSchedule;
             renderSchedule();
@@ -133,10 +121,7 @@
 
         function renderPlayerList() {
             document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
-                <div class="flex justify-between items-center bg-gray-50 p-2 rounded-lg mb-2 border border-gray-100">
-                    <span class="text-sm font-semibold text-gray-700">${p.name}</span>
-                    <button onclick="deletePlayer('${p.id}')" class="text-red-300 hover:text-red-500 transition-colors">✕</button>
-                </div>`).join('');
+                <div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg mb-2 border border-gray-100"><span class="text-base font-bold text-gray-700">${p.name}</span><button onclick="deletePlayer('${p.id}')" class="text-red-400 hover:text-red-600 px-2">✕</button></div>`).join('');
             document.getElementById('player-count').textContent = window.appState.players.length;
         }
 
@@ -146,18 +131,18 @@
                 const active = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
                 const out = playerNames.filter(n => !active.includes(n));
                 return `
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 mb-4 scale-in">
-                    <div class="flex justify-between text-[10px] font-black text-gray-300 mb-3 uppercase tracking-tighter">
+                <div class="bg-white p-5 rounded-3xl shadow-sm border border-gray-100 mb-6">
+                    <div class="flex justify-between text-xs font-black text-gray-400 mb-4 uppercase tracking-widest">
                         <span>Round ${m.round} • Court ${m.court}</span>
-                        ${m.court === 1 && out.length ? `<span class="bg-amber-50 text-amber-600 px-2 py-0.5 rounded italic font-bold">Sitting: ${out.join(', ')}</span>` : ''}
+                        ${out.length ? `<span class="bg-amber-50 text-amber-700 px-3 py-1 rounded-full italic">Waiting: ${out.join(', ')}</span>` : ''}
                     </div>
-                    <div class="grid grid-cols-7 items-center gap-2">
-                        <div class="col-span-3 text-center text-xs font-black text-gray-800 leading-tight">${m.teamA.join('<br>& ')}</div>
-                        <div class="col-span-1 flex flex-col gap-1 items-center">
-                            <input type="number" id="score-a-${m.id}" onchange="recordScore('${m.id}')" placeholder="T1" class="w-10 border-2 border-indigo-50 rounded text-center text-indigo-600 font-black h-8 focus:ring-1 focus:ring-indigo-400 outline-none text-xs">
-                            <input type="number" id="score-b-${m.id}" onchange="recordScore('${m.id}')" placeholder="T2" class="w-10 border-2 border-emerald-50 rounded text-center text-emerald-600 font-black h-8 focus:ring-1 focus:ring-emerald-400 outline-none text-xs">
+                    <div class="grid grid-cols-7 items-center gap-3">
+                        <div class="col-span-3 text-center text-base font-black text-gray-800 leading-tight py-2">${m.teamA.join('<br>& ')}</div>
+                        <div class="col-span-1 flex flex-col gap-2 items-center">
+                            <input type="number" id="score-a-${m.id}" onchange="recordScore('${m.id}')" placeholder="T1" class="w-12 h-10 border-2 border-indigo-50 rounded-lg text-center text-indigo-700 font-black focus:ring-2 focus:ring-indigo-400 outline-none text-base">
+                            <input type="number" id="score-b-${m.id}" onchange="recordScore('${m.id}')" placeholder="T2" class="w-12 h-10 border-2 border-emerald-50 rounded-lg text-center text-emerald-700 font-black focus:ring-2 focus:ring-emerald-400 outline-none text-base">
                         </div>
-                        <div class="col-span-3 text-center text-xs font-black text-gray-800 leading-tight">${m.teamB.join('<br>& ')}</div>
+                        <div class="col-span-3 text-center text-base font-black text-gray-800 leading-tight py-2">${m.teamB.join('<br>& ')}</div>
                     </div>
                 </div>`;
             }).join('');
@@ -167,31 +152,28 @@
             const sorted = Object.entries(stats).map(([name, d]) => {
                 const winPct = d.games ? ((d.wins/d.games)*100).toFixed(0) : 0;
                 const avgDiff = d.games ? ((d.pf - d.pa) / d.games).toFixed(1) : "0.0";
-                return { name, winPct, avgDiff, record: `${d.wins}-${d.losses}`, games: d.games };
+                return { name, winPct, avgDiff, record: `${d.wins}-${d.losses}` };
             }).sort((a,b) => b.winPct - a.winPct || b.avgDiff - a.avgDiff);
 
             document.getElementById('standings-container').innerHTML = sorted.map((p, i) => `
-                <div class="flex justify-between items-center py-2.5 border-b border-gray-50 last:border-0 text-sm">
+                <div class="flex justify-between items-center py-4 border-b border-gray-50 last:border-0">
                     <div class="flex flex-col">
-                        <span class="font-black text-gray-700">${i+1}. ${p.name}</span>
-                        <span class="text-[9px] text-gray-400 uppercase font-black">Record: ${p.record} | Avg Diff: ${p.avgDiff > 0 ? '+' : ''}${p.avgDiff}</span>
+                        <span class="text-lg font-black text-gray-800 leading-none">${i+1}. ${p.name}</span>
+                        <span class="text-xs text-gray-400 uppercase font-bold mt-1">${p.record} | Avg Diff: ${p.avgDiff > 0 ? '+' : ''}${p.avgDiff}</span>
                     </div>
-                    <span class="font-black text-indigo-600 text-base">${p.winPct}%</span>
+                    <span class="font-black text-indigo-600 text-xl">${p.winPct}%</span>
                 </div>`).join('');
         }
 
         window.shareToWhatsApp = function() {
             if (window.appState.schedule.length === 0) return alert("Generate matches first!");
-            const playerNames = window.appState.players.map(p => p.name);
             let msg = "🎾 *PICKLEBALL MATCH SCHEDULE*\n\n";
             const rounds = [...new Set(window.appState.schedule.map(m => m.round))];
             rounds.forEach(r => {
                 msg += `*ROUND ${r}*\n`;
-                const rMatches = window.appState.schedule.filter(m => m.round === r);
-                rMatches.forEach(m => msg += `Ct ${m.court}: ${m.teamA.join(' & ')} vs ${m.teamB.join(' & ')}\n`);
-                const active = rMatches.flatMap(m => [...m.teamA, ...m.teamB]);
-                const out = playerNames.filter(n => !active.includes(n));
-                if (out.length) msg += `_Sitting: ${out.join(', ')}_\n`;
+                window.appState.schedule.filter(m => m.round === r).forEach(m => {
+                    msg += `Ct ${m.court}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`;
+                });
                 msg += "\n";
             });
             window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
@@ -206,74 +188,68 @@
 
         window.onload = initFirebase;
     </script>
-    <style>
-        .scale-in { animation: scaleIn 0.2s ease-out forwards; }
-        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-    </style>
 </head>
-<body class="bg-gray-50 min-h-screen pb-20 font-sans text-gray-900">
-    <header class="bg-indigo-700 text-white p-4 shadow-md sticky top-0 z-50">
-        <div class="max-w-5xl mx-auto flex justify-between items-center">
-            <h1 class="font-black italic text-lg tracking-tighter uppercase">Pickleball Doubles Scheduler</h1>
-            <div class="flex gap-2">
-                <button onclick="shareToWhatsApp()" class="bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-black px-4 py-2 rounded-full uppercase transition-all shadow-md active:scale-95">WhatsApp</button>
-                <button onclick="location.reload()" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-4 py-2 rounded-full uppercase transition active:scale-95">Reset</button>
+<body class="bg-gray-100 min-h-screen pb-20 font-sans text-gray-900">
+    <header class="bg-indigo-800 text-white p-5 shadow-lg sticky top-0 z-50">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <h1 class="font-black italic text-xl tracking-tighter uppercase">Pickleball Pro</h1>
+            <div class="flex gap-3">
+                <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-xs font-black px-5 py-2.5 rounded-full uppercase shadow-lg active:scale-95 transition-all">WhatsApp</button>
+                <button onclick="location.reload()" class="bg-white/20 text-white text-xs font-bold px-5 py-2.5 rounded-full uppercase">Reset</button>
             </div>
         </div>
     </header>
 
-    <main class="max-w-5xl mx-auto p-4 grid grid-cols-1 md:grid-cols-12 gap-6">
-        <div class="md:col-span-4 space-y-6">
-            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">1. Player Management (<span id="player-count">0</span>)</h2>
-                <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
-                    <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-medium" placeholder="Enter Name">
-                    <button class="bg-indigo-600 text-white px-5 rounded-xl font-black shadow-lg hover:bg-indigo-700 transition">+</button>
+    <main class="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-8 mt-4">
+        <div class="lg:col-span-4 space-y-6">
+            <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-200">
+                <h2 class="text-xs font-black text-gray-400 uppercase mb-6 tracking-widest">1. Players (<span id="player-count">0</span>)</h2>
+                <form onsubmit="addPlayer(event)" class="flex gap-3 mb-6">
+                    <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-2xl p-4 text-base font-medium focus:ring-2 focus:ring-indigo-500 outline-none border border-gray-100" placeholder="Add Name">
+                    <button class="bg-indigo-600 text-white px-6 rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition">+</button>
                 </form>
                 <div id="player-list"></div>
             </div>
 
-            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">2. Match Setup</h2>
-                <div class="space-y-4">
+            <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-200">
+                <h2 class="text-xs font-black text-gray-400 uppercase mb-6 tracking-widest">2. Match Setup</h2>
+                <div class="space-y-6">
                     <div>
-                        <label class="text-[10px] font-black text-gray-400 uppercase tracking-tighter ml-1">Total Matches</label>
-                        <input type="number" id="num-matches" value="8" class="w-full bg-gray-50 rounded-xl p-3 text-sm font-black text-indigo-600 outline-none">
+                        <label class="text-xs font-black text-gray-500 uppercase tracking-tighter ml-1">Total Matches</label>
+                        <input type="number" id="num-matches" value="12" class="w-full bg-gray-50 rounded-2xl p-4 text-lg font-black text-indigo-600 outline-none border border-gray-100 mt-2">
                         <div id="match-hint"></div>
                     </div>
                     <div>
-                        <label class="text-[10px] font-black text-gray-400 uppercase tracking-tighter ml-1">Courts</label>
-                        <select id="num-courts" class="w-full bg-gray-50 rounded-xl p-3 text-sm font-black text-gray-700 outline-none">
+                        <label class="text-xs font-black text-gray-500 uppercase tracking-tighter ml-1">Courts Available</label>
+                        <select id="num-courts" class="w-full bg-gray-50 rounded-2xl p-4 text-base font-black text-gray-700 outline-none border border-gray-100 mt-2">
                             <option value="1">1 Court</option>
                             <option value="2" selected>2 Courts</option>
                         </select>
                     </div>
-                    <button onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-xs tracking-widest shadow-xl hover:bg-indigo-700 transition">Generate Schedule</button>
+                    <button onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-5 rounded-2xl uppercase text-sm tracking-widest shadow-xl hover:bg-indigo-700 transition-all active:scale-95">Generate Schedule</button>
                 </div>
             </div>
         </div>
 
-        <div class="md:col-span-5">
-            <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest ml-1 italic">3 & 4. Schedule & Scores</h2>
+        <div class="lg:col-span-5">
+            <h2 class="text-xs font-black text-gray-400 uppercase mb-6 tracking-widest ml-1 italic">3. Live Schedule</h2>
             <div id="schedule-container"></div>
         </div>
 
-        <div class="md:col-span-3 space-y-4">
-            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
-                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest border-b border-gray-50 pb-2 italic">Session Rankings</h2>
+        <div class="lg:col-span-3 space-y-6">
+            <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-200 sticky top-28">
+                <h2 class="text-xs font-black text-gray-400 uppercase mb-6 tracking-widest border-b border-gray-50 pb-3 italic">Final Standings</h2>
                 <div id="standings-container"></div>
-            </div>
-
-            <div class="bg-indigo-50 p-5 rounded-3xl border border-indigo-100">
-                <h3 class="text-[10px] font-black text-indigo-800 uppercase mb-2 tracking-widest flex items-center gap-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" /></svg>
-                    Scoring Guide
-                </h3>
-                <p class="text-[10px] text-indigo-700 leading-relaxed italic">
-                    Rankings are based on <b>Win Rate (%)</b>. 
-                    <br><br>
-                    <b>Avg Diff</b> (Average Point Differential) is used as a tie-breaker. It calculates your average margin per game to keep comparisons fair even if player activity varies.
-                </p>
+                
+                <div class="mt-8 bg-indigo-50 p-6 rounded-3xl border border-indigo-100">
+                    <h3 class="text-xs font-black text-indigo-800 uppercase mb-3 tracking-widest flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" /></svg>
+                        Scoring
+                    </h3>
+                    <p class="text-xs text-indigo-700 leading-relaxed font-medium italic">
+                        Ranked by <b>Win %</b>. <b>Avg Diff</b> is the tie-breaker, calculating average point margin per game for total fairness.
+                    </p>
+                </div>
             </div>
         </div>
     </main>
