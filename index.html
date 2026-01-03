@@ -10,6 +10,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
         import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
+        // 🛑 REPLACE WITH YOUR ACTUAL FIREBASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCn_jPqsuMWkOTM4_BshPk2kcu7K3mpYlg", 
             authDomain: "pickleballmatchup.firebaseapp.com",
@@ -60,11 +61,9 @@
             let pointGoal = "";
 
             if (courts === 1) {
-                // 1 Court, 7 points (~8 mins per match). 120/8 = 15 matches max.
                 suggestCount = Math.min(fullVariety, 15);
                 pointGoal = "7 points";
             } else {
-                // 2 Courts, 11 points (~15 mins per match). (120/15) * 2 = 16 matches max.
                 suggestCount = Math.min(fullVariety, 16);
                 pointGoal = "11 points";
             }
@@ -127,9 +126,11 @@
 
         window.shareToWhatsApp = function() {
             if (window.appState.schedule.length === 0) return alert("Generate schedule first!");
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
             let msg = "🎾 *PICKLEBALL SCHEDULE*\n\n";
             window.appState.schedule.forEach(m => {
-                msg += `Rnd ${m.round} - Ct ${m.court}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`;
+                const courtInfo = courts > 1 ? ` (Ct ${m.court})` : "";
+                msg += `Rnd ${m.round}${courtInfo}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`;
             });
             window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
         };
@@ -143,14 +144,16 @@
 
         function renderSchedule() {
             const playerNames = window.appState.players.map(p => p.name);
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
             document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
                 const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
                 const waiting = playerNames.filter(n => !activeInRound.includes(n));
+                const showCourt = courts > 1 ? ` • <span class="text-indigo-600">Court ${m.court}</span>` : "";
                 return `
                 <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
                     <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
-                        <span>Round ${m.round} • <span class="text-indigo-600">Court ${m.court}</span></span>
-                        ${waiting.length && m.court === 1 ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
+                        <span>Round ${m.round}${showCourt}</span>
+                        ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
                     </div>
                     <div class="grid grid-cols-7 items-center gap-2">
                         <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamA.join('<br>& ')}</div>
