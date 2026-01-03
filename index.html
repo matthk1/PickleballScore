@@ -149,30 +149,45 @@
                 </table>`;
         }
 
-        function renderSchedule() {
-            const courts = parseInt(document.getElementById('num-courts').value) || 1;
-            const playerNames = window.appState.players.map(p => p.name);
-            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
-                const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
-                const waiting = playerNames.filter(n => !activeInRound.includes(n));
-                const teamUI = (team, side) => team.map(p => `<div class="flex items-center justify-center gap-1 font-black"><span>${p}</span><button onclick="swapPlayer('${m.id}', '${p}', '${side}')" class="text-indigo-300">⇄</button></div>`).join('');
-                return `
-                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
-                    <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
-                        <span>Round ${m.round}${courts > 1 ? ' • Ct '+m.court : ''}</span>
-                        ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
-                    </div>
-                    <div class="grid grid-cols-7 items-center gap-2">
-                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamA, 'A')}</div>
-                        <div class="col-span-1 flex flex-col gap-1 items-center">
-                            <input type="number" id="score-a-${m.id}" value="${m.scoreA||''}" onchange="recordScore('${m.id}')" class="w-10 h-8 border border-gray-200 rounded text-center font-black">
-                            <input type="number" id="score-b-${m.id}" value="${m.scoreB||''}" onchange="recordScore('${m.id}')" class="w-10 h-8 border border-gray-200 rounded text-center font-black">
-                        </div>
-                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamB, 'B')}</div>
-                    </div>
-                </div>`;
-            }).join('');
-        }
+function renderSchedule() {
+    const courts = parseInt(document.getElementById('num-courts').value) || 1;
+    const playerNames = window.appState.players.map(p => p.name);
+    document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+        const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
+        const waiting = playerNames.filter(n => !activeInRound.includes(n));
+        
+        const teamUI = (team, side) => team.map(p => `
+            <div class="flex items-center justify-center gap-1 font-black">
+                <span class="truncate">${p}</span>
+                <button onclick="swapPlayer('${m.id}', '${p}', '${side}')" class="text-indigo-300 hover:text-indigo-600">⇄</button>
+            </div>`).join('');
+
+        return `
+        <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
+            <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
+                <span>Round ${m.round}${courts > 1 ? ' • Ct '+m.court : ''}</span>
+                ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
+            </div>
+            
+            <div class="grid grid-cols-7 items-center gap-1">
+                <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamA, 'A')}</div>
+                
+                <div class="col-span-1 flex justify-center gap-1">
+                    <input type="number" id="score-a-${m.id}" value="${m.scoreA||''}" 
+                        onchange="recordScore('${m.id}')" 
+                        placeholder="A"
+                        class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                    <input type="number" id="score-b-${m.id}" value="${m.scoreB||''}" 
+                        onchange="recordScore('${m.id}')" 
+                        placeholder="B"
+                        class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                </div>
+                
+                <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamB, 'B')}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
 
         window.shareToWhatsApp = function() {
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
