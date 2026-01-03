@@ -50,16 +50,35 @@
             const n = window.appState.players.length;
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
             const hintDiv = document.getElementById('match-hint');
-            if (n < 4) return;
+            if (n < 4) {
+                hintDiv.innerHTML = `<p class="text-[11px] text-gray-400 mt-2 italic text-center">Add 4+ players for advice.</p>`;
+                return;
+            }
+            
             const fullVariety = Math.ceil((n * (n - 1)) / 4);
-            let sessionAdvice = courts === 1 
-                ? `<b>1 Court:</b> Play to <b>7 points</b>. Suggest <b>16-17 matches</b>.` 
-                : `<b>2 Courts:</b> Play to <b>11 points</b>. Suggest <b>${fullVariety} matches</b>.`;
+            let suggestCount = 0;
+            let pointGoal = "";
+
+            if (courts === 1) {
+                // 1 Court, 7 points (~8 mins per match). 120/8 = 15 matches max.
+                suggestCount = Math.min(fullVariety, 15);
+                pointGoal = "7 points";
+            } else {
+                // 2 Courts, 11 points (~15 mins per match). (120/15) * 2 = 16 matches max.
+                suggestCount = Math.min(fullVariety, 16);
+                pointGoal = "11 points";
+            }
 
             hintDiv.innerHTML = `
-                <div class="bg-indigo-50 p-4 rounded-[1.5rem] border border-indigo-100 mt-4 space-y-2">
-                    <p class="text-[12px] text-indigo-900 leading-tight">Full Rotation: <b>${fullVariety} matches</b>.</p>
-                    <p class="text-[12px] text-emerald-900 border-t border-indigo-200/50 pt-2">${sessionAdvice}</p>
+                <div class="bg-indigo-50 p-4 rounded-[1.5rem] border border-indigo-100 mt-4 space-y-3">
+                    <div class="flex items-start gap-2">
+                        <span class="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Goal</span>
+                        <p class="text-[12px] text-indigo-900 leading-tight">Full variety for ${n} players: <b>${fullVariety} matches</b>.</p>
+                    </div>
+                    <div class="flex items-start gap-2 border-t border-indigo-200/50 pt-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">2-Hour</span>
+                        <p class="text-[12px] text-emerald-900 leading-tight">Play to <b>${pointGoal}</b>. Suggest <b>${suggestCount} matches</b> total.</p>
+                    </div>
                 </div>`;
         }
 
@@ -131,7 +150,7 @@
                 <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
                     <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
                         <span>Round ${m.round} • <span class="text-indigo-600">Court ${m.court}</span></span>
-                        ${waiting.length && m.court === 1 ? `<span class="text-amber-600 italic">Out: ${waiting.join(', ')}</span>` : ''}
+                        ${waiting.length && m.court === 1 ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
                     </div>
                     <div class="grid grid-cols-7 items-center gap-2">
                         <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamA.join('<br>& ')}</div>
@@ -188,11 +207,11 @@
 </head>
 <body class="bg-gray-100 min-h-screen pb-20 font-sans text-gray-900">
     <header class="bg-indigo-900 text-white p-4 shadow-xl sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto flex justify-between items-center">
-            <h1 class="font-black italic text-xl tracking-tighter uppercase">Pickleball Pro</h1>
+        <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
+            <h1 class="font-black italic text-xl tracking-tighter uppercase shrink-0">Pickleball Pro</h1>
             <div class="flex gap-2">
-                <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-4 py-2.5 rounded-full uppercase shadow-lg">WhatsApp</button>
-                <button onclick="confirmReset()" class="bg-white/20 text-white text-[10px] font-bold px-4 py-2.5 rounded-full uppercase">Reset</button>
+                <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-4 py-2.5 rounded-full uppercase shadow-lg whitespace-nowrap">WhatsApp</button>
+                <button onclick="confirmReset()" class="bg-white/20 text-white text-[10px] font-bold px-4 py-2.5 rounded-full uppercase whitespace-nowrap">Reset</button>
             </div>
         </div>
     </header>
