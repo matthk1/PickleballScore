@@ -10,6 +10,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
         import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
+        // 🛑 REPLACE WITH YOUR ACTUAL FIREBASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCn_jPqsuMWkOTM4_BshPk2kcu7K3mpYlg", 
             authDomain: "pickleballmatchup.firebaseapp.com",
@@ -70,10 +71,12 @@
             const playCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
             const waitCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
             const partnerHistory = {};
+            const opponentHistory = {}; // Track repeat matchups
             const newSchedule = [];
 
             let matchCount = 0;
             let currentRound = 1;
+
             while (matchCount < roundsTarget) {
                 let roundParticipants = [];
                 let available = [...playerNames].sort((a,b) => (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]) || Math.random() - 0.5);
@@ -90,14 +93,35 @@
                     options.forEach(o => {
                         const p1 = o.t1.sort().join('&');
                         const p2 = o.t2.sort().join('&');
-                        // STRONGER PENALTY: Multiply by 100 to prioritize variety over randomness
-                        o.score = ((partnerHistory[p1] || 0) * 100) + ((partnerHistory[p2] || 0) * 100);
+                        
+                        // Partner Penalty
+                        let partnerScore = (partnerHistory[p1] || 0) + (partnerHistory[p2] || 0);
+                        
+                        // Opponent Penalty (check every cross-matchup)
+                        let opponentScore = 0;
+                        o.t1.forEach(a => {
+                            o.t2.forEach(b => {
+                                const matchup = [a, b].sort().join('v');
+                                opponentScore += (opponentHistory[matchup] || 0);
+                            });
+                        });
+
+                        // Weight partners higher, but block repeat opponents too
+                        o.score = (partnerScore * 1000) + (opponentScore * 100);
                     });
 
                     const best = options.sort((a,b) => a.score - b.score)[0];
+                    
+                    // Update History
                     partnerHistory[best.t1.sort().join('&')] = (partnerHistory[best.t1.sort().join('&')] || 0) + 1;
                     partnerHistory[best.t2.sort().join('&')] = (partnerHistory[best.t2.sort().join('&')] || 0) + 1;
-                    
+                    best.t1.forEach(a => {
+                        best.t2.forEach(b => {
+                            const matchup = [a, b].sort().join('v');
+                            opponentHistory[matchup] = (opponentHistory[matchup] || 0) + 1;
+                        });
+                    });
+
                     [...best.t1, ...best.t2].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
                     newSchedule.push({ id: `${currentRound}-${c}`, round: currentRound, court: c, teamA: best.t1, teamB: best.t2, scoreA: null, scoreB: null });
                     matchCount++;
@@ -190,10 +214,10 @@
         window.onload = initFirebase;
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen pb-20 text-gray-900">
+<body class="bg-gray-100 min-h-screen pb-20 text-gray-900 font-sans">
     <header class="bg-indigo-900 text-white p-4 shadow-xl sticky top-0 z-50">
         <div class="max-w-6xl mx-auto flex justify-between items-center">
-            <h1 class="font-black italic text-xl uppercase tracking-tighter">Pickleball Pro</h1>
+            <h1 class="font-black italic text-xl uppercase tracking-tighter shrink-0">Pickleball Pro</h1>
             <div class="flex gap-2">
                 <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-4 py-2.5 rounded-full uppercase">WhatsApp</button>
                 <button onclick="confirmReset()" class="bg-white/20 text-white text-[10px] font-bold px-4 py-2.5 rounded-full uppercase">Reset</button>
@@ -207,7 +231,7 @@
                 <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">1. Players (<span id="player-count">0</span>)</h2>
                 <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
                     <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-xl p-4 font-bold outline-none border border-gray-100" placeholder="Add Name">
-                    <button class="bg-indigo-600 text-white px-6 rounded-xl font-black shadow-lg hover:bg-indigo-700">+</button>
+                    <button class="bg-indigo-600 text-white px-6 rounded-xl font-black shadow-lg">+</button>
                 </form>
                 <div id="player-list"></div>
             </div>
@@ -227,7 +251,7 @@
                         </select>
                         <div id="match-hint"></div>
                     </div>
-                    <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-5 rounded-xl uppercase text-sm tracking-widest shadow-xl active:scale-95">Generate Schedule</button>
+                    <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-5 rounded-xl uppercase text-sm tracking-widest shadow-xl">Generate Schedule</button>
                 </div>
             </div>
         </div>
