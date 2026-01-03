@@ -49,24 +49,30 @@
 
         window.updateMatchHint = function() {
             const n = window.appState.players.length;
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
             const hintDiv = document.getElementById('match-hint');
             if (n < 4) return;
             
             const fullVariety = Math.ceil((n * (n - 1)) / 4);
-            
+            let sessionAdvice = "";
+
+            if (courts === 1) {
+                sessionAdvice = `<b>1 Court (2hr Session):</b> Play to <b>7 points</b>. We suggest <b>16-17 matches</b> to keep the queue moving.`;
+            } else {
+                sessionAdvice = `<b>2 Courts (2hr Session):</b> Play to <b>11 points</b>. You can reach the ideal <b>${fullVariety} matches</b> easily!`;
+            }
+
             hintDiv.innerHTML = `
                 <div class="bg-indigo-50 p-4 rounded-[1.5rem] border border-indigo-100 mt-4 space-y-3">
                     <div class="flex items-start gap-2">
-                        <span class="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Ideal</span>
+                        <span class="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Variety</span>
                         <p class="text-[12px] text-indigo-900 leading-tight">
-                            To play with <b>every partner</b> once, you need <b>${fullVariety} matches</b>.
+                            Full partner rotation: <b>${fullVariety} matches</b>.
                         </p>
                     </div>
                     <div class="flex items-start gap-2 border-t border-indigo-200/50 pt-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">2-Hour</span>
-                        <p class="text-[12px] text-emerald-900 leading-tight">
-                            For <b>2 hours (play to 7)</b>, we suggest <b>12 matches</b>.
-                        </p>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Advice</span>
+                        <p class="text-[12px] text-emerald-900 leading-tight">${sessionAdvice}</p>
                     </div>
                 </div>`;
         }
