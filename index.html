@@ -50,46 +50,22 @@
             const n = window.appState.players.length;
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
             const hintDiv = document.getElementById('match-hint');
-            if (n < 4) {
-                hintDiv.innerHTML = `<p class="text-[11px] text-gray-400 mt-2 italic text-center">Add at least 4 players to see advice.</p>`;
-                return;
-            }
-            
+            if (n < 4) return;
             const fullVariety = Math.ceil((n * (n - 1)) / 4);
-            let sessionAdvice = "";
-
-            if (courts === 1) {
-                // For 1 court, session length is limited by time. To 7 points = ~8 mins/match.
-                // 120 mins / 8 mins = ~15 matches total.
-                const matchesPerSession = 15;
-                sessionAdvice = `<b>1 Court (2hr Session):</b> Play to <b>7 points</b>. Suggest <b>${matchesPerSession} matches</b> to keep the queue moving.`;
-            } else {
-                // For 2 courts, session capacity is doubled. To 11 points = ~15 mins/match.
-                // 120 mins / 15 mins * 2 courts = ~16 matches total.
-                // However, if Variety Goal is smaller than capacity, suggest Variety Goal.
-                const capacity = 16;
-                const suggest = Math.min(fullVariety, capacity);
-                sessionAdvice = `<b>2 Courts (2hr Session):</b> Play to <b>11 points</b>. Suggest <b>${suggest} matches</b> for this group size.`;
-            }
+            let sessionAdvice = courts === 1 
+                ? `<b>1 Court:</b> Play to <b>7 points</b>. Suggest <b>16-17 matches</b>.` 
+                : `<b>2 Courts:</b> Play to <b>11 points</b>. Suggest <b>${fullVariety} matches</b>.`;
 
             hintDiv.innerHTML = `
-                <div class="bg-indigo-50 p-4 rounded-[1.5rem] border border-indigo-100 mt-4 space-y-3">
-                    <div class="flex items-start gap-2">
-                        <span class="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Variety</span>
-                        <p class="text-[12px] text-indigo-900 leading-tight">
-                            Full partner rotation for ${n} players: <b>${fullVariety} matches</b>.
-                        </p>
-                    </div>
-                    <div class="flex items-start gap-2 border-t border-indigo-200/50 pt-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase flex-shrink-0 mt-1">Advice</span>
-                        <p class="text-[12px] text-emerald-900 leading-tight">${sessionAdvice}</p>
-                    </div>
+                <div class="bg-indigo-50 p-4 rounded-[1.5rem] border border-indigo-100 mt-4 space-y-2">
+                    <p class="text-[12px] text-indigo-900 leading-tight">Full Rotation: <b>${fullVariety} matches</b>.</p>
+                    <p class="text-[12px] text-emerald-900 border-t border-indigo-200/50 pt-2">${sessionAdvice}</p>
                 </div>`;
         }
 
         window.generateSchedule = function() {
             if (window.appState.isLocked) return;
-            const rounds = parseInt(document.getElementById('num-matches').value) || 1;
+            const roundsTarget = parseInt(document.getElementById('num-matches').value) || 1;
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
             const playerNames = window.appState.players.map(p => p.name);
             if (playerNames.length < 4) return alert("Need 4+ players.");
@@ -99,40 +75,44 @@
             const partnerHistory = {};
             const newSchedule = [];
 
-            for (let r = 1; r <= rounds; r++) {
+            let matchCount = 0;
+            let currentRound = 1;
+            while (matchCount < roundsTarget) {
                 let roundParticipants = [];
-                let available = [...playerNames].sort((a,b) => {
-                    if (waitCounts[b] !== waitCounts[a]) return waitCounts[b] - waitCounts[a];
-                    return playCounts[a] - playCounts[b] || Math.random() - 0.5;
-                });
+                let available = [...playerNames].sort((a,b) => (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]) || Math.random() - 0.5);
                 
                 for (let c = 1; c <= courts; c++) {
-                    if (available.length < 4) break;
+                    if (available.length < 4 || matchCount >= roundsTarget) break;
                     const pool = available.splice(0, 4);
                     const options = [{ t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] }, { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] }, { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }];
                     options.forEach(o => {
-                        const p1 = o.t1.sort().join('&');
-                        const p2 = o.t2.sort().join('&');
-                        o.score = (partnerHistory[p1] || 0) + (partnerHistory[p2] || 0);
+                        o.score = (partnerHistory[o.t1.sort().join('&')] || 0) + (partnerHistory[o.t2.sort().join('&')] || 0);
                     });
                     const best = options.sort((a,b) => a.score - b.score)[0];
                     partnerHistory[best.t1.sort().join('&')] = (partnerHistory[best.t1.sort().join('&')] || 0) + 1;
                     partnerHistory[best.t2.sort().join('&')] = (partnerHistory[best.t2.sort().join('&')] || 0) + 1;
                     [...best.t1, ...best.t2].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
-                    newSchedule.push({ id: `${r}-${c}`, round: r, court: c, teamA: best.t1, teamB: best.t2, scoreA: null, scoreB: null });
+                    newSchedule.push({ id: `${currentRound}-${c}`, round: currentRound, court: c, teamA: best.t1, teamB: best.t2, scoreA: null, scoreB: null });
+                    matchCount++;
                 }
                 playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
+                currentRound++;
             }
             window.appState.schedule = newSchedule;
             window.appState.isLocked = true;
             document.getElementById('gen-btn').disabled = true;
-            document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
+            document.getElementById('gen-btn').classList.add('opacity-50');
             renderSchedule();
             calculateStandings();
         };
 
-        window.confirmReset = function() {
-            if (confirm("⚠️ RESET SESSION?\nThis will wipe all scores and the schedule.")) { location.reload(); }
+        window.shareToWhatsApp = function() {
+            if (window.appState.schedule.length === 0) return alert("Generate schedule first!");
+            let msg = "🎾 *PICKLEBALL SCHEDULE*\n\n";
+            window.appState.schedule.forEach(m => {
+                msg += `Rnd ${m.round} - Ct ${m.court}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`;
+            });
+            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
         };
 
         window.recordScore = function(id) {
@@ -141,6 +121,29 @@
             m.scoreB = parseInt(document.getElementById(`score-b-${id}`).value) || 0;
             calculateStandings();
         };
+
+        function renderSchedule() {
+            const playerNames = window.appState.players.map(p => p.name);
+            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+                const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
+                const waiting = playerNames.filter(n => !activeInRound.includes(n));
+                return `
+                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
+                    <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
+                        <span>Round ${m.round} • <span class="text-indigo-600">Court ${m.court}</span></span>
+                        ${waiting.length && m.court === 1 ? `<span class="text-amber-600 italic">Out: ${waiting.join(', ')}</span>` : ''}
+                    </div>
+                    <div class="grid grid-cols-7 items-center gap-2">
+                        <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamA.join('<br>& ')}</div>
+                        <div class="col-span-1 flex flex-col gap-1 items-center">
+                            <input type="number" id="score-a-${m.id}" onchange="recordScore('${m.id}')" class="w-12 h-10 border-2 border-indigo-100 rounded-lg text-center text-indigo-700 font-black text-lg outline-none">
+                            <input type="number" id="score-b-${m.id}" onchange="recordScore('${m.id}')" class="w-12 h-10 border-2 border-emerald-100 rounded-lg text-center text-emerald-700 font-black text-lg outline-none">
+                        </div>
+                        <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamB.join('<br>& ')}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
 
         function calculateStandings() {
             const stats = {};
@@ -155,54 +158,23 @@
             renderStandings(stats);
         }
 
+        function renderStandings(sortedStats) {
+            const sorted = Object.entries(sortedStats).map(([name, d]) => ({
+                name, winPct: d.games ? ((d.wins/d.games)*100).toFixed(0) : 0, 
+                diff: d.pf - d.pa, record: `${d.wins}-${d.losses}`
+            })).sort((a,b) => b.winPct - a.winPct || b.diff - a.diff);
+            document.getElementById('standings-container').innerHTML = sorted.map((p, i) => `
+                <div class="flex justify-between items-center py-3 border-b border-gray-50 last:border-0">
+                    <div class="flex flex-col"><span class="text-lg font-black text-gray-800">${i+1}. ${p.name}</span><span class="text-[10px] text-gray-400 uppercase font-bold tracking-wider">${p.record} (Diff: ${p.diff})</span></div>
+                    <span class="font-black text-indigo-600 text-2xl">${p.winPct}%</span>
+                </div>`).join('');
+        }
+
         function renderPlayerList() {
             document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
                 <div class="flex justify-between items-center bg-gray-50 p-3 rounded-xl mb-2 border border-gray-100"><span class="text-base font-bold text-gray-700">${p.name}</span><button onclick="deletePlayer('${p.id}')" class="text-red-400 px-2 text-xl font-light">✕</button></div>`).join('');
             document.getElementById('player-count').textContent = window.appState.players.length;
         }
-
-        function renderSchedule() {
-            const playerNames = window.appState.players.map(p => p.name);
-            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
-                const active = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
-                const out = playerNames.filter(n => !active.includes(n));
-                return `
-                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
-                    <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
-                        <span>Rnd ${m.round} • Ct ${m.court}</span>
-                        ${out.length ? `<span class="text-amber-600 italic">Wait: ${out.join(', ')}</span>` : ''}
-                    </div>
-                    <div class="grid grid-cols-7 items-center gap-2">
-                        <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamA.join('<br>& ')}</div>
-                        <div class="col-span-1 flex flex-col gap-1 items-center">
-                            <input type="number" id="score-a-${m.id}" onchange="recordScore('${m.id}')" class="w-12 h-10 border-2 border-indigo-100 rounded-lg text-center text-indigo-700 font-black text-lg outline-none">
-                            <input type="number" id="score-b-${m.id}" onchange="recordScore('${m.id}')" class="w-12 h-10 border-2 border-emerald-100 rounded-lg text-center text-emerald-700 font-black text-lg outline-none">
-                        </div>
-                        <div class="col-span-3 text-center text-lg font-black text-gray-800 leading-tight">${m.teamB.join('<br>& ')}</div>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function renderStandings(stats) {
-            const sorted = Object.entries(stats).map(([name, d]) => {
-                const winPct = d.games ? ((d.wins/d.games)*100).toFixed(0) : 0;
-                const avgDiff = d.games ? ((d.pf - d.pa) / d.games).toFixed(1) : "0.0";
-                return { name, winPct, avgDiff, record: `${d.wins}-${d.losses}` };
-            }).sort((a,b) => b.winPct - a.winPct || b.avgDiff - a.avgDiff);
-            document.getElementById('standings-container').innerHTML = sorted.map((p, i) => `
-                <div class="flex justify-between items-center py-3 border-b border-gray-50 last:border-0">
-                    <div class="flex flex-col"><span class="text-lg font-black text-gray-800">${i+1}. ${p.name}</span><span class="text-[10px] text-gray-400 uppercase font-bold tracking-wider">${p.record} | Diff: ${p.avgDiff > 0 ? '+' : ''}${p.avgDiff}</span></div>
-                    <span class="font-black text-indigo-600 text-2xl">${p.winPct}%</span>
-                </div>`).join('');
-        }
-
-        window.shareToWhatsApp = function() {
-            if (window.appState.schedule.length === 0) return alert("Generate schedule first!");
-            let msg = "🎾 *PICKLEBALL SCHEDULE*\n\n";
-            window.appState.schedule.forEach(m => { msg += `Rnd ${m.round}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`; });
-            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-        };
 
         window.deletePlayer = async (id) => { await deleteDoc(doc(getPlayersRef(), id)); };
         window.addPlayer = async (e) => {
@@ -210,16 +182,17 @@
             const input = document.getElementById('new-player-name');
             if (input.value.trim()) { await addDoc(getPlayersRef(), { name: input.value.trim() }); input.value = ''; }
         };
+        window.confirmReset = () => { if (confirm("Reset everything?")) location.reload(); };
         window.onload = initFirebase;
     </script>
 </head>
 <body class="bg-gray-100 min-h-screen pb-20 font-sans text-gray-900">
     <header class="bg-indigo-900 text-white p-4 shadow-xl sticky top-0 z-50">
-        <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
-            <h1 class="font-black italic text-xl tracking-tighter uppercase shrink-0">Pickleball Pro</h1>
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <h1 class="font-black italic text-xl tracking-tighter uppercase">Pickleball Pro</h1>
             <div class="flex gap-2">
-                <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-4 py-2.5 rounded-full uppercase shadow-lg active:scale-95 transition-all whitespace-nowrap">WhatsApp</button>
-                <button onclick="confirmReset()" class="bg-white/20 text-white text-[10px] font-bold px-4 py-2.5 rounded-full uppercase transition-all hover:bg-red-600 whitespace-nowrap">Reset</button>
+                <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-4 py-2.5 rounded-full uppercase shadow-lg">WhatsApp</button>
+                <button onclick="confirmReset()" class="bg-white/20 text-white text-[10px] font-bold px-4 py-2.5 rounded-full uppercase">Reset</button>
             </div>
         </div>
     </header>
@@ -229,8 +202,8 @@
             <div class="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-200">
                 <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">1. Players (<span id="player-count">0</span>)</h2>
                 <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
-                    <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-xl p-4 text-base font-bold outline-none border border-gray-100 focus:ring-2 focus:ring-indigo-500" placeholder="Add Name">
-                    <button class="bg-indigo-600 text-white px-6 rounded-xl font-black shadow-lg hover:bg-indigo-700 transition">+</button>
+                    <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-xl p-4 text-base font-bold outline-none border border-gray-100" placeholder="Add Name">
+                    <button class="bg-indigo-600 text-white px-6 rounded-xl font-black shadow-lg hover:bg-indigo-700">+</button>
                 </form>
                 <div id="player-list"></div>
             </div>
@@ -240,23 +213,23 @@
                 <div class="space-y-4">
                     <div>
                         <label class="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Total Matches</label>
-                        <input type="number" id="num-matches" value="12" class="w-full bg-gray-50 rounded-xl p-4 text-2xl font-black text-indigo-600 outline-none border border-gray-100 mt-1">
+                        <input type="number" id="num-matches" value="12" class="w-full bg-gray-50 rounded-xl p-4 text-2xl font-black text-indigo-600 border border-gray-100 mt-1">
                     </div>
                     <div>
                         <label class="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Courts</label>
-                        <select id="num-courts" onchange="updateMatchHint()" class="w-full bg-gray-50 rounded-xl p-4 text-base font-black text-gray-700 outline-none border border-gray-100 mt-1">
+                        <select id="num-courts" onchange="updateMatchHint()" class="w-full bg-gray-50 rounded-xl p-4 text-base font-black text-gray-700 border border-gray-100 mt-1">
                             <option value="1">1 Court</option>
                             <option value="2" selected>2 Courts</option>
                         </select>
                         <div id="match-hint"></div>
                     </div>
-                    <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-5 rounded-xl uppercase text-sm tracking-widest shadow-xl hover:bg-indigo-700 transition-all active:scale-95">Generate Schedule</button>
+                    <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-5 rounded-xl uppercase text-sm tracking-widest shadow-xl active:scale-95">Generate Schedule</button>
                 </div>
             </div>
         </div>
 
         <div class="lg:col-span-5">
-            <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest ml-1 italic text-center lg:text-left">3. Live Schedule</h2>
+            <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest italic text-center lg:text-left">3. Live Schedule</h2>
             <div id="schedule-container"></div>
         </div>
 
@@ -264,7 +237,6 @@
             <div class="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-200 sticky top-28">
                 <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest border-b pb-3 italic">Rankings</h2>
                 <div id="standings-container"></div>
-                <p class="text-[11px] text-indigo-700 leading-tight font-bold italic mt-4">🏆 Ranked by Win Rate. Avg Diff is tie-breaker.</p>
             </div>
         </div>
     </main>
