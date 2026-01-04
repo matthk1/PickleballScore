@@ -79,17 +79,23 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // RULE 1 & 2: Priority based on waiting, but with a massive Random tie-breaker
-        // to ensure "Group A" and "Group B" merge immediately.
+        // 1. FAIRNESS FIRST: We calculate a "Priority Score"
+        // Waiting is worth 1000 points. Playing is -100 points. Random is 1-10 points.
+        // This ensures someone who waited MUST play, but shuffles everyone else.
         let available = [...playerNames].sort((a, b) => {
-            const priority = (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]);
-            return priority || (Math.random() - 0.5);
+            const scoreA = (waitCounts[a] * 1000) - (playCounts[a] * 100) + (Math.random() * 10);
+            const scoreB = (waitCounts[b] * 1000) - (playCounts[b] * 100) + (Math.random() * 10);
+            return scoreB - scoreA; 
         });
         
         let roundPool = available.slice(0, courts * 4);
         
-        // Shuffle the selected 8 players so they don't stay on the same courts
-        roundPool = roundPool.sort(() => Math.random() - 0.5);
+        // 2. POD BREAKER: Shuffle the selected 8 (or 4) players 
+        // This ensures they don't stay on the same courts round-after-round.
+        for (let i = roundPool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [roundPool[i], roundPool[j]] = [roundPool[j], roundPool[i]];
+        }
         
         let roundParticipants = [];
 
@@ -97,7 +103,6 @@ window.generateSchedule = function() {
             if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
             const pool = roundPool.splice(0, 4);
             
-            // RULE 3 & 4: Score all 3 ways these 4 players can be split
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -106,12 +111,10 @@ window.generateSchedule = function() {
 
             combos.forEach(o => {
                 let penalty = 0;
-                // Partnership Check (Massive penalty)
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
                     const key = pair.sort().join('&');
-                    penalty += (partnerHistory[key] || 0) * 1000;
+                    penalty += (partnerHistory[key] || 0) * 5000; 
                 });
-                // Opponent Check (Medium penalty)
                 o.t1.forEach(pA => {
                     o.t2.forEach(pB => {
                         const vs = [pA, pB].sort().join('_vs_');
@@ -121,10 +124,9 @@ window.generateSchedule = function() {
                 o.totalPenalty = penalty;
             });
 
-            // Pick the pairing with the lowest penalty
             const best = combos.sort((a,b) => a.totalPenalty - b.totalPenalty)[0];
 
-            // UPDATE HISTORIES
+            // Histories
             [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
@@ -147,7 +149,7 @@ window.generateSchedule = function() {
         }
         playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
     }
-
+    // ... rest of function (renderSchedule, etc)
     window.appState.schedule = newSchedule;
     window.appState.isLocked = true;
     document.getElementById('gen-btn').disabled = true;
