@@ -79,21 +79,17 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. THE MIXER: We add a random decimal to the sort. 
-        // This prevents the same 4 players from being at the top of the list every round.
+        // RULE 1 & 2: Priority based on waiting, but with a massive Random tie-breaker
+        // to ensure "Group A" and "Group B" merge immediately.
         let available = [...playerNames].sort((a, b) => {
-            const scoreA = (waitCounts[a] * 10) - playCounts[a] + Math.random();
-            const scoreB = (waitCounts[b] * 10) - playCounts[b] + Math.random();
-            return scoreB - scoreA;
+            const priority = (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]);
+            return priority || (Math.random() - 0.5);
         });
         
         let roundPool = available.slice(0, courts * 4);
         
-        // 2. COURT SHUFFLE: Randomly distribute the 8 players into the two courts.
-        for (let i = roundPool.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [roundPool[i], roundPool[j]] = [roundPool[j], roundPool[i]];
-        }
+        // Shuffle the selected 8 players so they don't stay on the same courts
+        roundPool = roundPool.sort(() => Math.random() - 0.5);
         
         let roundParticipants = [];
 
@@ -101,6 +97,7 @@ window.generateSchedule = function() {
             if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
             const pool = roundPool.splice(0, 4);
             
+            // RULE 3 & 4: Score all 3 ways these 4 players can be split
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -108,24 +105,26 @@ window.generateSchedule = function() {
             ];
 
             combos.forEach(o => {
-                let score = 0;
+                let penalty = 0;
+                // Partnership Check (Massive penalty)
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
                     const key = pair.sort().join('&');
-                    // 10,000 point penalty makes repeat partners nearly impossible
-                    score += (partnerHistory[key] || 0) * 10000; 
+                    penalty += (partnerHistory[key] || 0) * 1000;
                 });
+                // Opponent Check (Medium penalty)
                 o.t1.forEach(pA => {
                     o.t2.forEach(pB => {
                         const vs = [pA, pB].sort().join('_vs_');
-                        score += (opponentHistory[vs] || 0) * 50; 
+                        penalty += (opponentHistory[vs] || 0) * 100;
                     });
                 });
-                o.totalScore = score;
+                o.totalPenalty = penalty;
             });
 
-            const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
+            // Pick the pairing with the lowest penalty
+            const best = combos.sort((a,b) => a.totalPenalty - b.totalPenalty)[0];
 
-            // Record History
+            // UPDATE HISTORIES
             [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
