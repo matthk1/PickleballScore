@@ -79,25 +79,29 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. PHYSICAL SHUFFLE: Scramble the deck first.
+        // STAGE 1: Full Master Shuffle (Breaks the pods in the list)
         let masterList = [...playerNames];
         for (let i = masterList.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [masterList[i], masterList[j]] = [masterList[j], masterList[i]];
         }
 
-        // 2. FAIRNESS SORT: Move those who waited to the front.
-        // Because we shuffled first, ties in waitCounts are broken randomly.
+        // STAGE 2: Fairness Sort (Prioritize those who sat out)
         masterList.sort((a, b) => (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]));
         
+        // STAGE 3: THE ISLAND BREAKER (Scramble the 8 selected players again)
         let roundPool = masterList.slice(0, courts * 4);
+        for (let i = roundPool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [roundPool[i], roundPool[j]] = [roundPool[j], roundPool[i]];
+        }
+
         let roundParticipants = [];
 
         for (let c = 1; c <= courts; c++) {
             if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
             const pool = roundPool.splice(0, 4);
             
-            // 3. VARIETY OPTIMIZATION: Pick the best teams among the 4 selected.
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -108,12 +112,13 @@ window.generateSchedule = function() {
                 let penalty = 0;
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
                     const key = pair.sort().join('&');
-                    penalty += (partnerHistory[key] || 0) * 10000; 
+                    // 100k Penalty makes repeat partners mathematically impossible for 7 rounds
+                    penalty += (partnerHistory[key] || 0) * 100000; 
                 });
                 o.t1.forEach(pA => {
                     o.t2.forEach(pB => {
                         const vs = [pA, pB].sort().join('_vs_');
-                        penalty += (opponentHistory[vs] || 0) * 100;
+                        penalty += (opponentHistory[vs] || 0) * 500;
                     });
                 });
                 o.totalPenalty = penalty;
@@ -121,7 +126,6 @@ window.generateSchedule = function() {
 
             const best = combos.sort((a,b) => a.totalPenalty - b.totalPenalty)[0];
 
-            // Update Histories
             [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
