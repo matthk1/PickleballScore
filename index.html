@@ -79,78 +79,80 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. SELECT: Get the players who NEED to play based on fairness.
-        let available = [...playerNames].sort((a, b) => {
-            const scoreA = (waitCounts[a] * 100) - playCounts[a] + Math.random();
-            const scoreB = (waitCounts[b] * 100) - playCounts[b] + Math.random();
+        // 1. SELECT PLAYERS: Priority = (Wait * 1000) - Play + Random
+        let pool = [...playerNames].sort((a, b) => {
+            const scoreA = (waitCounts[a] * 1000) - (playCounts[a] * 10) + Math.random();
+            const scoreB = (waitCounts[b] * 1000) - (playCounts[b] * 10) + Math.random();
             return scoreB - scoreA;
-        });
-        const playersThisRound = available.slice(0, courts * 4);
+        }).slice(0, courts * 4);
 
-        // 2. SEARCH: Try 50 random ways to arrange these players into games.
-        let bestRoundConfig = null;
-        let lowestRoundPenalty = Infinity;
+        // Safety: If we don't have enough for at least one court, stop.
+        if (pool.length < 4) break;
 
-        for (let attempt = 0; attempt < 50; attempt++) {
-            // Scramble the selected players
-            let pool = [...playersThisRound].sort(() => Math.random() - 0.5);
-            let currentAttemptMatches = [];
-            let currentAttemptPenalty = 0;
-
-            for (let c = 1; c <= courts; c++) {
-                const p = pool.splice(0, 4);
-                // Try the 3 ways to split these 4 people
-                const pairings = [
-                    { t1: [p[0], p[1]], t2: [p[2], p[3]] },
-                    { t1: [p[0], p[2]], t2: [p[1], p[3]] },
-                    { t1: [p[0], p[3]], t2: [p[1], pool[2]] }
-                ];
-
-                pairings.forEach(pair => {
-                    let pScore = 0;
-                    // Partner Penalty
-                    [[pair.t1[0], pair.t1[1]], [pair.t2[0], pair.t2[1]]].forEach(team => {
-                        const key = team.sort().join('&');
-                        pScore += (partnerHistory[key] || 0) * 10000;
-                    });
-                    // Opponent Penalty
-                    pair.t1.forEach(pA => pair.t2.forEach(pB => {
-                        const vs = [pA, pB].sort().join('_vs_');
-                        pScore += (opponentHistory[vs] || 0) * 100;
-                    }));
-                    pair.score = pScore;
-                });
-
-                const bestPairing = pairings.sort((a, b) => a.score - b.score)[0];
-                currentAttemptMatches.push({ court: c, ...bestPairing });
-                currentAttemptPenalty += bestPairing.score;
-            }
-
-            if (currentAttemptPenalty < lowestRoundPenalty) {
-                lowestRoundPenalty = currentAttemptPenalty;
-                bestRoundConfig = currentAttemptMatches;
-            }
-        }
-
-        // 3. EXECUTE: Save the winner of the 50 attempts
         let roundParticipants = [];
-        bestRoundConfig.forEach(m => {
-            newSchedule.push({
-                id: `${r}-${m.court}`, round: r, court: m.court,
-                teamA: m.t1, teamB: m.t2, scoreA: null, scoreB: null
+
+        // 2. BUILD TEAMS PERSON-BY-PERSON
+        // We pick Court 1, then Court 2, finding the best partner for each.
+        for (let c = 1; c <= courts; c++) {
+            if (pool.length < 4) break;
+
+            // Pick the first player for this court (already randomized from pool)
+            let p1 = pool.shift();
+            
+            // Find the best partner for p1 (least partnered)
+            pool.sort((a, b) => {
+                const keyA = [p1, a].sort().join('&');
+                const keyB = [p1, b].sort().join('&');
+                return (partnerHistory[keyA] || 0) - (partnerHistory[keyB] || 0);
+            });
+            let p2 = pool.shift();
+
+            // Find the best two opponents (least played against p1 and p2)
+            pool.sort((a, b) => {
+                const score = (name) => {
+                    const vs1 = [p1, name].sort().join('_vs_');
+                    const vs2 = [p2, name].sort().join('_vs_');
+                    return (opponentHistory[vs1] || 0) + (opponentHistory[vs2] || 0);
+                };
+                return score(a) - score(b);
             });
             
-            // Update Histories
-            [m.t1.sort().join('&'), m.t2.sort().join('&')].forEach(k => partnerHistory[k] = (partnerHistory[k] || 0) + 1);
-            m.t1.forEach(pA => m.t2.forEach(pB => {
-                const vs = [pA, pB].sort().join('_vs_');
-                opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
-            }));
+            // From the remaining pool, we need the 2 best opponents who haven't 
+            // partnered with each other much.
+            let p3 = pool.shift();
+            let p4 = pool.shift();
+
+            const teamA = [p1, p2];
+            const teamB = [p3, p4];
+
+            // 3. RECORD HISTORIES
+            [teamA, teamB].forEach(team => {
+                const key = team.sort().join('&');
+                partnerHistory[key] = (partnerHistory[key] || 0) + 1;
+            });
             
-            [...m.t1, ...m.t2].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
+            teamA.forEach(a => teamB.forEach(b => {
+                const key = [a, b].sort().join('_vs_');
+                opponentHistory[key] = (opponentHistory[key] || 0) + 1;
+            }));
+
+            [...teamA, ...teamB].forEach(p => {
+                playCounts[p]++;
+                roundParticipants.push(p);
+                waitCounts[p] = 0;
+            });
+
+            newSchedule.push({
+                id: `${r}-${c}`, round: r, court: c,
+                teamA: [...teamA], teamB: [...teamB],
+                scoreA: null, scoreB: null
+            });
+        }
+
+        // Update Wait Counts for those who didn't play
+        playerNames.forEach(p => {
+            if (!roundParticipants.includes(p)) waitCounts[p]++;
         });
-        
-        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
     }
 
     window.appState.schedule = newSchedule;
