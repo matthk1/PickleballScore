@@ -79,73 +79,77 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // STAGE 1: Full Master Shuffle (Breaks the pods in the list)
-        let masterList = [...playerNames];
-        for (let i = masterList.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [masterList[i], masterList[j]] = [masterList[j], masterList[i]];
-        }
+        // 1. SELECT: Get the players who NEED to play based on fairness.
+        let available = [...playerNames].sort((a, b) => {
+            const scoreA = (waitCounts[a] * 100) - playCounts[a] + Math.random();
+            const scoreB = (waitCounts[b] * 100) - playCounts[b] + Math.random();
+            return scoreB - scoreA;
+        });
+        const playersThisRound = available.slice(0, courts * 4);
 
-        // STAGE 2: Fairness Sort (Prioritize those who sat out)
-        masterList.sort((a, b) => (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]));
-        
-        // STAGE 3: THE ISLAND BREAKER (Scramble the 8 selected players again)
-        let roundPool = masterList.slice(0, courts * 4);
-        for (let i = roundPool.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [roundPool[i], roundPool[j]] = [roundPool[j], roundPool[i]];
-        }
+        // 2. SEARCH: Try 50 random ways to arrange these players into games.
+        let bestRoundConfig = null;
+        let lowestRoundPenalty = Infinity;
 
-        let roundParticipants = [];
+        for (let attempt = 0; attempt < 50; attempt++) {
+            // Scramble the selected players
+            let pool = [...playersThisRound].sort(() => Math.random() - 0.5);
+            let currentAttemptMatches = [];
+            let currentAttemptPenalty = 0;
 
-        for (let c = 1; c <= courts; c++) {
-            if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
-            const pool = roundPool.splice(0, 4);
-            
-            const combos = [
-                { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
-                { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
-                { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
-            ];
+            for (let c = 1; c <= courts; c++) {
+                const p = pool.splice(0, 4);
+                // Try the 3 ways to split these 4 people
+                const pairings = [
+                    { t1: [p[0], p[1]], t2: [p[2], p[3]] },
+                    { t1: [p[0], p[2]], t2: [p[1], p[3]] },
+                    { t1: [p[0], p[3]], t2: [p[1], pool[2]] }
+                ];
 
-            combos.forEach(o => {
-                let penalty = 0;
-                [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
-                    const key = pair.sort().join('&');
-                    // 100k Penalty makes repeat partners mathematically impossible for 7 rounds
-                    penalty += (partnerHistory[key] || 0) * 100000; 
-                });
-                o.t1.forEach(pA => {
-                    o.t2.forEach(pB => {
-                        const vs = [pA, pB].sort().join('_vs_');
-                        penalty += (opponentHistory[vs] || 0) * 500;
+                pairings.forEach(pair => {
+                    let pScore = 0;
+                    // Partner Penalty
+                    [[pair.t1[0], pair.t1[1]], [pair.t2[0], pair.t2[1]]].forEach(team => {
+                        const key = team.sort().join('&');
+                        pScore += (partnerHistory[key] || 0) * 10000;
                     });
+                    // Opponent Penalty
+                    pair.t1.forEach(pA => pair.t2.forEach(pB => {
+                        const vs = [pA, pB].sort().join('_vs_');
+                        pScore += (opponentHistory[vs] || 0) * 100;
+                    }));
+                    pair.score = pScore;
                 });
-                o.totalPenalty = penalty;
-            });
 
-            const best = combos.sort((a,b) => a.totalPenalty - b.totalPenalty)[0];
+                const bestPairing = pairings.sort((a, b) => a.score - b.score)[0];
+                currentAttemptMatches.push({ court: c, ...bestPairing });
+                currentAttemptPenalty += bestPairing.score;
+            }
 
-            [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
-                partnerHistory[k] = (partnerHistory[k] || 0) + 1;
-            });
-            best.t1.forEach(pA => {
-                best.t2.forEach(pB => {
-                    const vs = [pA, pB].sort().join('_vs_');
-                    opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
-                });
-            });
-
-            [...best.t1, ...best.t2].forEach(p => { 
-                playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; 
-            });
-
-            newSchedule.push({ 
-                id: `${r}-${c}`, round: r, court: c, 
-                teamA: [...best.t1], teamB: [...best.t2], 
-                scoreA: null, scoreB: null 
-            });
+            if (currentAttemptPenalty < lowestRoundPenalty) {
+                lowestRoundPenalty = currentAttemptPenalty;
+                bestRoundConfig = currentAttemptMatches;
+            }
         }
+
+        // 3. EXECUTE: Save the winner of the 50 attempts
+        let roundParticipants = [];
+        bestRoundConfig.forEach(m => {
+            newSchedule.push({
+                id: `${r}-${m.court}`, round: r, court: m.court,
+                teamA: m.t1, teamB: m.t2, scoreA: null, scoreB: null
+            });
+            
+            // Update Histories
+            [m.t1.sort().join('&'), m.t2.sort().join('&')].forEach(k => partnerHistory[k] = (partnerHistory[k] || 0) + 1);
+            m.t1.forEach(pA => m.t2.forEach(pB => {
+                const vs = [pA, pB].sort().join('_vs_');
+                opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
+            }));
+            
+            [...m.t1, ...m.t2].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
+        });
+        
         playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
     }
 
