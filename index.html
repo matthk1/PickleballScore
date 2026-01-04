@@ -62,110 +62,93 @@
                 </div>`;
         }
 
-   window.generateSchedule = function() {
-    if (window.appState.isLocked) return;
-    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
-    const playerNames = window.appState.players.map(p => p.name);
-    const courts = parseInt(document.getElementById('num-courts').value) || 1;
-    
-    const playCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
-    const waitCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
-    
-    // Trackers for Variety
-    const partnerHistory = {}; 
-    const opponentHistory = {};
-    const newSchedule = [];
-
-    for (let r = 1; r <= 100; r++) { // Higher loop limit to ensure we hit roundsTarget
-        if (newSchedule.length >= roundsTarget) break;
-        
-        // STRICT FAIRNESS: Sort by who has waited longest, then fewest games played
-        let available = [...playerNames].sort((a,b) => 
-            (waitCounts[b] - waitCounts[a]) || 
-            (playCounts[a] - playCounts[b]) || 
-            Math.random() - 0.5
-        );
-        
-        let roundParticipants = [];
-
-        for (let c = 1; c <= courts; c++) {
-            if (available.length < 4 || newSchedule.length >= roundsTarget) break;
+        window.generateSchedule = function() {
+            if (window.appState.isLocked) return;
+            const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
+            const playerNames = window.appState.players.map(p => p.name);
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
             
-            const pool = available.splice(0, 4);
-            
-            // Generate all 3 possible ways to split these 4 players into 2 teams
-            const combos = [
-                { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
-                { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
-                { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
-            ];
+            const playCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
+            const waitCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
+            const partnerHistory = {}; 
+            const opponentHistory = {};
+            const newSchedule = [];
 
-            // Score each combo based on Partnership AND Opponent history
-            combos.forEach(o => {
-                let pScore = 0; // Partnership overlap
-                let oScore = 0; // Opponent overlap
+            for (let r = 1; r <= 100; r++) {
+                if (newSchedule.length >= roundsTarget) break;
                 
-                const teams = [o.t1, o.t2];
-                // Check partners
-                teams.forEach(t => {
-                    const pair = [...t].sort().join('&');
-                    pScore += (partnerHistory[pair] || 0);
-                });
-                // Check opponents
-                o.t1.forEach(pA => {
-                    o.t2.forEach(pB => {
-                        const vs = [pA, pB].sort().join('_vs_');
-                        oScore += (opponentHistory[vs] || 0);
+                let available = [...playerNames].sort((a,b) => 
+                    (waitCounts[b] - waitCounts[a]) || 
+                    (playCounts[a] - playCounts[b]) || 
+                    Math.random() - 0.5
+                );
+                
+                let roundParticipants = [];
+
+                for (let c = 1; c <= courts; c++) {
+                    if (available.length < 4 || newSchedule.length >= roundsTarget) break;
+                    
+                    const pool = available.splice(0, 4);
+                    const combos = [
+                        { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
+                        { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
+                        { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
+                    ];
+
+                    combos.forEach(o => {
+                        let pScore = 0, oScore = 0;
+                        const teams = [o.t1, o.t2];
+                        teams.forEach(t => {
+                            const pair = [...t].sort().join('&');
+                            pScore += (partnerHistory[pair] || 0);
+                        });
+                        o.t1.forEach(pA => {
+                            o.t2.forEach(pB => {
+                                const vs = [pA, pB].sort().join('_vs_');
+                                oScore += (opponentHistory[vs] || 0);
+                            });
+                        });
+                        o.totalScore = (pScore * 2) + oScore;
                     });
-                });
-                
-                o.totalScore = (pScore * 2) + oScore; // Weight partnerships slightly higher
-            });
 
-            // Pick the combo with the lowest "History Score"
-            const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
+                    const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
 
-            // Record History
-            const p1 = [...best.t1].sort().join('&');
-            const p2 = [...best.t2].sort().join('&');
-            partnerHistory[p1] = (partnerHistory[p1] || 0) + 1;
-            partnerHistory[p2] = (partnerHistory[p2] || 0) + 1;
-            
-            best.t1.forEach(pA => {
-                best.t2.forEach(pB => {
-                    const vs = [pA, pB].sort().join('_vs_');
-                    opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
-                });
-            });
+                    const p1 = [...best.t1].sort().join('&');
+                    const p2 = [...best.t2].sort().join('&');
+                    partnerHistory[p1] = (partnerHistory[p1] || 0) + 1;
+                    partnerHistory[p2] = (partnerHistory[p2] || 0) + 1;
+                    
+                    best.t1.forEach(pA => {
+                        best.t2.forEach(pB => {
+                            const vs = [pA, pB].sort().join('_vs_');
+                            opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
+                        });
+                    });
 
-            // Update Fairness Trackers
-            [...best.t1, ...best.t2].forEach(p => { 
-                playCounts[p]++; 
-                roundParticipants.push(p); 
-                waitCounts[p] = 0; 
-            });
+                    [...best.t1, ...best.t2].forEach(p => { 
+                        playCounts[p]++; 
+                        roundParticipants.push(p); 
+                        waitCounts[p] = 0; 
+                    });
 
-            newSchedule.push({ 
-                id: `${r}-${c}`, 
-                round: r, 
-                court: c, 
-                teamA: [...best.t1], 
-                teamB: [...best.t2], 
-                scoreA: null, 
-                scoreB: null 
-            });
-        }
-        // Increment wait count for those not playing this round
-        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
-    }
+                    newSchedule.push({ 
+                        id: `${r}-${c}`, 
+                        round: r, 
+                        court: c, 
+                        teamA: [...best.t1], 
+                        teamB: [...best.t2], 
+                        scoreA: null, 
+                        scoreB: null 
+                    });
+                }
+                playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
+            }
 
-    window.appState.schedule = newSchedule;
-    window.appState.isLocked = true;
-    document.getElementById('gen-btn').disabled = true;
-    document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
-    renderSchedule();
-
-}
+            window.appState.schedule = newSchedule;
+            window.appState.isLocked = true;
+            document.getElementById('gen-btn').disabled = true;
+            document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
+            renderSchedule();
         };
 
         window.swapPlayer = function(matchId, playerName, fromTeam) {
@@ -215,45 +198,36 @@
                 </table>`;
         }
 
-function renderSchedule() {
-    const courts = parseInt(document.getElementById('num-courts').value) || 1;
-    const playerNames = window.appState.players.map(p => p.name);
-    document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
-        const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
-        const waiting = playerNames.filter(n => !activeInRound.includes(n));
-        
-        const teamUI = (team, side) => team.map(p => `
-            <div class="flex items-center justify-center gap-1 font-black">
-                <span class="truncate">${p}</span>
-                <button onclick="swapPlayer('${m.id}', '${p}', '${side}')" class="text-indigo-300 hover:text-indigo-600">⇄</button>
-            </div>`).join('');
+        function renderSchedule() {
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
+            const playerNames = window.appState.players.map(p => p.name);
+            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+                const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
+                const waiting = playerNames.filter(n => !activeInRound.includes(n));
+                
+                const teamUI = (team, side) => team.map(p => `
+                    <div class="flex items-center justify-center gap-1 font-black">
+                        <span class="truncate">${p}</span>
+                        <button onclick="swapPlayer('${m.id}', '${p}', '${side}')" class="text-indigo-300 hover:text-indigo-600">⇄</button>
+                    </div>`).join('');
 
-        return `
-        <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
-            <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
-                <span>Round ${m.round}${courts > 1 ? ' • Ct '+m.court : ''}</span>
-                ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
-            </div>
-            
-            <div class="grid grid-cols-7 items-center gap-1">
-                <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamA, 'A')}</div>
-                
-                <div class="col-span-1 flex justify-center gap-1">
-                    <input type="number" id="score-a-${m.id}" value="${m.scoreA||''}" 
-                        onchange="recordScore('${m.id}')" 
-                        placeholder="A"
-                        class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
-                    <input type="number" id="score-b-${m.id}" value="${m.scoreB||''}" 
-                        onchange="recordScore('${m.id}')" 
-                        placeholder="B"
-                        class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
-                </div>
-                
-                <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamB, 'B')}</div>
-            </div>
-        </div>`;
-    }).join('');
-}
+                return `
+                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
+                    <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
+                        <span>Round ${m.round}${courts > 1 ? ' • Ct '+m.court : ''}</span>
+                        ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
+                    </div>
+                    <div class="grid grid-cols-7 items-center gap-1">
+                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamA, 'A')}</div>
+                        <div class="col-span-1 flex justify-center gap-1">
+                            <input type="number" id="score-a-${m.id}" value="${m.scoreA||''}" onchange="recordScore('${m.id}')" placeholder="A" class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                            <input type="number" id="score-b-${m.id}" value="${m.scoreB||''}" onchange="recordScore('${m.id}')" placeholder="B" class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                        </div>
+                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamB, 'B')}</div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
 
         window.shareToWhatsApp = function() {
             const courts = parseInt(document.getElementById('num-courts').value) || 1;
