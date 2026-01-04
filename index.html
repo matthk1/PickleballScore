@@ -72,87 +72,104 @@ window.generateSchedule = function() {
     const waitCounts = {};
     const partnerHistory = {}; 
     const opponentHistory = {};
+    const courtHistory = {}; // NEW: Tracks who has shared a court (any role)
     const newSchedule = [];
 
-    playerNames.forEach(n => { playCounts[n] = 0; waitCounts[n] = 0; });
+    playerNames.forEach(n => { 
+        playCounts[n] = 0; 
+        waitCounts[n] = 0; 
+        playerNames.forEach(n2 => {
+            if (n !== n2) courtHistory[[n, n2].sort().join('|')] = 0;
+        });
+    });
 
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. SELECT PLAYERS: Priority = (Wait * 1000) - Play + Random
-        let pool = [...playerNames].sort((a, b) => {
+        // 1. SELECT: Priority based on Fairness
+        let selectedPlayers = [...playerNames].sort((a, b) => {
             const scoreA = (waitCounts[a] * 1000) - (playCounts[a] * 10) + Math.random();
             const scoreB = (waitCounts[b] * 1000) - (playCounts[b] * 10) + Math.random();
             return scoreB - scoreA;
         }).slice(0, courts * 4);
 
-        // Safety: If we don't have enough for at least one court, stop.
-        if (pool.length < 4) break;
+        if (selectedPlayers.length < 4) break;
 
-        let roundParticipants = [];
+        // 2. OPTIMIZE: Try 200 random configurations for the WHOLE round
+        let bestRoundConfig = null;
+        let lowestPenalty = Infinity;
 
-        // 2. BUILD TEAMS PERSON-BY-PERSON
-        // We pick Court 1, then Court 2, finding the best partner for each.
-        for (let c = 1; c <= courts; c++) {
-            if (pool.length < 4) break;
+        for (let i = 0; i < 200; i++) {
+            let attemptPool = [...selectedPlayers].sort(() => Math.random() - 0.5);
+            let attemptMatches = [];
+            let attemptPenalty = 0;
 
-            // Pick the first player for this court (already randomized from pool)
-            let p1 = pool.shift();
-            
-            // Find the best partner for p1 (least partnered)
-            pool.sort((a, b) => {
-                const keyA = [p1, a].sort().join('&');
-                const keyB = [p1, b].sort().join('&');
-                return (partnerHistory[keyA] || 0) - (partnerHistory[keyB] || 0);
-            });
-            let p2 = pool.shift();
+            for (let c = 0; c < courts; c++) {
+                let p = attemptPool.slice(c * 4, (c * 4) + 4);
+                if (p.length < 4) continue;
 
-            // Find the best two opponents (least played against p1 and p2)
-            pool.sort((a, b) => {
-                const score = (name) => {
-                    const vs1 = [p1, name].sort().join('_vs_');
-                    const vs2 = [p2, name].sort().join('_vs_');
-                    return (opponentHistory[vs1] || 0) + (opponentHistory[vs2] || 0);
-                };
-                return score(a) - score(b);
-            });
-            
-            // From the remaining pool, we need the 2 best opponents who haven't 
-            // partnered with each other much.
-            let p3 = pool.shift();
-            let p4 = pool.shift();
+                // For these 4 people, find the best pairing (3 options)
+                let combos = [
+                    { t1: [p[0], p[1]], t2: [p[2], p[3]] },
+                    { t1: [p[0], p[2]], t2: [p[1], p[3]] },
+                    { t1: [p[0], p[3]], t2: [p[1], p[2]] }
+                ];
 
-            const teamA = [p1, p2];
-            const teamB = [p3, p4];
+                combos.forEach(o => {
+                    let pScore = 0;
+                    // Partner Penalty (Highest)
+                    [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(team => {
+                        pScore += (partnerHistory[team.sort().join('&')] || 0) * 10000;
+                    });
+                    // Opponent Penalty (Medium)
+                    o.t1.forEach(pA => o.t2.forEach(pB => {
+                        pScore += (opponentHistory[[pA, pB].sort().join('_vs_')] || 0) * 100;
+                    }));
+                    // Court-mate Penalty (NEW: Forces people to see new faces on their court)
+                    for (let x = 0; x < 4; x++) {
+                        for (let y = x + 1; y < 4; y++) {
+                            pScore += (courtHistory[[p[x], p[y]].sort().join('|')] || 0) * 500;
+                        }
+                    }
+                    o.score = pScore;
+                });
 
-            // 3. RECORD HISTORIES
-            [teamA, teamB].forEach(team => {
-                const key = team.sort().join('&');
-                partnerHistory[key] = (partnerHistory[key] || 0) + 1;
-            });
-            
-            teamA.forEach(a => teamB.forEach(b => {
-                const key = [a, b].sort().join('_vs_');
-                opponentHistory[key] = (opponentHistory[key] || 0) + 1;
-            }));
+                let bestCombo = combos.sort((a, b) => a.score - b.score)[0];
+                attemptMatches.push({ court: c + 1, ...bestCombo, allFour: p });
+                attemptPenalty += bestCombo.score;
+            }
 
-            [...teamA, ...teamB].forEach(p => {
-                playCounts[p]++;
-                roundParticipants.push(p);
-                waitCounts[p] = 0;
-            });
-
-            newSchedule.push({
-                id: `${r}-${c}`, round: r, court: c,
-                teamA: [...teamA], teamB: [...teamB],
-                scoreA: null, scoreB: null
-            });
+            if (attemptPenalty < lowestPenalty) {
+                lowestPenalty = attemptPenalty;
+                bestRoundConfig = attemptMatches;
+            }
         }
 
-        // Update Wait Counts for those who didn't play
-        playerNames.forEach(p => {
-            if (!roundParticipants.includes(p)) waitCounts[p]++;
+        // 3. EXECUTE: Record the winner
+        let roundParticipants = [];
+        bestRoundConfig.forEach(m => {
+            newSchedule.push({
+                id: `${r}-${m.court}`, round: r, court: m.court,
+                teamA: m.t1, teamB: m.t2, scoreA: null, scoreB: null
+            });
+
+            // Update All Histories
+            [m.t1, m.t2].forEach(team => {
+                partnerHistory[team.sort().join('&')] = (partnerHistory[team.sort().join('&')] || 0) + 1;
+            });
+            m.t1.forEach(pA => m.t2.forEach(pB => {
+                opponentHistory[[pA, pB].sort().join('_vs_')] = (opponentHistory[[pA, pB].sort().join('_vs_')] || 0) + 1;
+            }));
+            for (let x = 0; x < 4; x++) {
+                for (let y = x + 1; y < 4; y++) {
+                    const key = [m.allFour[x], m.allFour[y]].sort().join('|');
+                    courtHistory[key] = (courtHistory[key] || 0) + 1;
+                }
+            }
+            [...m.allFour].forEach(p => { playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; });
         });
+
+        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
     }
 
     window.appState.schedule = newSchedule;
