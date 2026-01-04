@@ -64,94 +64,71 @@
 
 window.generateSchedule = function() {
     if (window.appState.isLocked) return;
-    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
-    const playerNames = window.appState.players.map(p => p.name);
-    const courts = parseInt(document.getElementById('num-courts').value) || 1;
     
-    const playCounts = {};
-    const waitCounts = {};
-    const connectionHistory = {}; 
-    const partnerHistory = {}; 
+    const playerNames = window.appState.players.map(p => p.name);
+    const numPlayers = playerNames.length;
+    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
+    const courts = parseInt(document.getElementById('num-courts').value) || 1;
     const newSchedule = [];
 
-    playerNames.forEach(n => { 
-        playCounts[n] = 0; 
-        waitCounts[n] = 0;
-    });
+    // --- CASE 1: THE PERFECT 8-PLAYER MATRIX ---
+    if (numPlayers === 8) {
+        const matrix8 = [
+            [[0, 1], [2, 3]], [[4, 5], [6, 7]],
+            [[0, 2], [4, 6]], [[1, 3], [5, 7]],
+            [[0, 3], [5, 6]], [[1, 2], [4, 7]],
+            [[0, 4], [1, 5]], [[2, 6], [3, 7]],
+            [[0, 5], [3, 4]], [[1, 6], [2, 7]],
+            [[0, 6], [1, 7]], [[2, 4], [3, 5]],
+            [[0, 7], [1, 2]], [[3, 6], [4, 5]]
+        ];
 
-    for (let r = 1; r <= roundsTarget; r++) {
-        // 1. SELECT: Priority by Fairness (Wait Counts > Play Counts)
-        let available = [...playerNames].sort((a, b) => {
-            const scoreA = (waitCounts[a] * 1000) - (playCounts[a] * 10) + Math.random();
-            const scoreB = (waitCounts[b] * 1000) - (playCounts[b] * 10) + Math.random();
-            return scoreB - scoreA;
-        });
-        
-        let pool = available.slice(0, courts * 4);
-        let roundParticipants = [];
+        const shuffled = [...playerNames].sort(() => Math.random() - 0.5);
 
-        // 2. BUILD COURTS
-        for (let c = 1; c <= courts; c++) {
-            if (pool.length < 4) break;
-
-            let p1 = pool.shift();
-            
-            // Find best partner (p2)
-            pool.sort((a, b) => {
-                const keyA = [p1, a].sort().join('|');
-                const keyB = [p1, b].sort().join('|');
-                return (partnerHistory[keyA] || 0) - (partnerHistory[keyB] || 0) || Math.random() - 0.5;
-            });
-            let p2 = pool.shift();
-
-            // Find best opponents (p3, p4) based on CONNECTION to p1 and p2
-            pool.sort((a, b) => {
-                const getConn = (name) => {
-                    return (connectionHistory[[p1, name].sort().join('|')] || 0) + 
-                           (connectionHistory[[p2, name].sort().join('|')] || 0);
-                };
-                return getConn(a) - getConn(b) || Math.random() - 0.5;
-            });
-            
-            let p3 = pool.shift();
-            let p4 = pool.shift();
-
-            const teamA = [p1, p2];
-            const teamB = [p3, p4];
-            const allFour = [...teamA, ...teamB];
-
-            // 3. UPDATE HISTORIES
-            partnerHistory[teamA.sort().join('|')] = (partnerHistory[teamA.sort().join('|')] || 0) + 1;
-            partnerHistory[teamB.sort().join('|')] = (partnerHistory[teamB.sort().join('|')] || 0) + 1;
-
-            for (let i = 0; i < allFour.length; i++) {
-                for (let j = i + 1; j < allFour.length; j++) {
-                    const key = [allFour[i], allFour[j]].sort().join('|');
-                    connectionHistory[key] = (connectionHistory[key] || 0) + 1;
-                }
-            }
-
-            allFour.forEach(p => {
-                playCounts[p]++;
-                roundParticipants.push(p);
-                waitCounts[p] = 0;
-            });
-
+        for (let i = 0; i < roundsTarget; i++) {
+            const match = matrix8[i % matrix8.length];
             newSchedule.push({
-                id: `${r}-${c}`, round: r, court: c,
-                teamA: teamA, teamB: teamB,
+                id: `${i + 1}`, round: i + 1, court: 1,
+                teamA: [shuffled[match[0][0]], shuffled[match[0][1]]],
+                teamB: [shuffled[match[1][0]], shuffled[match[1][1]]],
                 scoreA: null, scoreB: null
             });
         }
+    } 
+    // --- CASE 2: UNIVERSAL CIRCLE METHOD (Any other number) ---
+    else {
+        let pool = [...playerNames];
+        if (numPlayers % 2 !== 0) pool.push("BYE");
+        const n = pool.length;
+        let positions = Array.from({length: n}, (_, i) => i);
 
-        // Update Waiters (those not in the roundParticipants)
-        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
+        for (let r = 0; r < roundsTarget; r++) {
+            let pairs = [];
+            for (let i = 0; i < n / 2; i++) {
+                let p1 = pool[positions[i]];
+                let p2 = pool[positions[n - 1 - i]];
+                if (p1 !== "BYE" && p2 !== "BYE") pairs.push([p1, p2]);
+            }
+
+            for (let c = 1; c <= courts; c++) {
+                if (pairs.length < 2) break;
+                newSchedule.push({
+                    id: `${r + 1}-${c}`, round: r + 1, court: c,
+                    teamA: pairs.shift(), teamB: pairs.shift(),
+                    scoreA: null, scoreB: null
+                });
+            }
+
+            // Rotate circle: fix index 0, shift others
+            let rest = positions.slice(1);
+            rest.unshift(rest.pop());
+            positions = [positions[0], ...rest];
+        }
     }
 
     window.appState.schedule = newSchedule;
     window.appState.isLocked = true;
     document.getElementById('gen-btn').disabled = true;
-    document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
     renderSchedule();
 };
 
