@@ -62,94 +62,98 @@
                 </div>`;
         }
 
-        window.generateSchedule = function() {
-            if (window.appState.isLocked) return;
-            const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
-            const playerNames = window.appState.players.map(p => p.name);
-            const courts = parseInt(document.getElementById('num-courts').value) || 1;
+window.generateSchedule = function() {
+    if (window.appState.isLocked) return;
+    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
+    const playerNames = window.appState.players.map(p => p.name);
+    const courts = parseInt(document.getElementById('num-courts').value) || 1;
+    
+    // Reset trackers
+    const playCounts = {};
+    const waitCounts = {};
+    const partnerHistory = {}; 
+    const opponentHistory = {};
+    const newSchedule = [];
+
+    playerNames.forEach(n => { playCounts[n] = 0; waitCounts[n] = 0; });
+
+    for (let r = 1; r <= 100; r++) {
+        if (newSchedule.length >= roundsTarget) break;
+        
+        // 1. FAIRNESS: Get players who should play based on wait/play counts
+        let available = [...playerNames].sort((a,b) => 
+            (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b])
+        );
+        
+        // 2. THE FIX: Grab all players needed for the WHOLE round first
+        let roundPool = available.slice(0, courts * 4);
+        
+        // 3. SHUFFLE: Randomize this pool so they don't stay on the same courts
+        roundPool = roundPool.sort(() => Math.random() - 0.5);
+        
+        let roundParticipants = [];
+
+        for (let c = 1; c <= courts; c++) {
+            if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
             
-            const playCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
-            const waitCounts = playerNames.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
-            const partnerHistory = {}; 
-            const opponentHistory = {};
-            const newSchedule = [];
+            // Pick 4 from the shuffled pool
+            const pool = roundPool.splice(0, 4);
+            
+            // Optimization: Find the best partnership within these 4
+            const combos = [
+                { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
+                { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
+                { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
+            ];
 
-            for (let r = 1; r <= 100; r++) {
-                if (newSchedule.length >= roundsTarget) break;
-                
-                let available = [...playerNames].sort((a,b) => 
-                    (waitCounts[b] - waitCounts[a]) || 
-                    (playCounts[a] - playCounts[b]) || 
-                    Math.random() - 0.5
-                );
-                
-                let roundParticipants = [];
-
-                for (let c = 1; c <= courts; c++) {
-                    if (available.length < 4 || newSchedule.length >= roundsTarget) break;
-                    
-                    const pool = available.splice(0, 4);
-                    const combos = [
-                        { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
-                        { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
-                        { t1: [pool[0], pool[3]], t2: [pool[1], pool[2]] }
-                    ];
-
-                    combos.forEach(o => {
-                        let pScore = 0, oScore = 0;
-                        const teams = [o.t1, o.t2];
-                        teams.forEach(t => {
-                            const pair = [...t].sort().join('&');
-                            pScore += (partnerHistory[pair] || 0);
-                        });
-                        o.t1.forEach(pA => {
-                            o.t2.forEach(pB => {
-                                const vs = [pA, pB].sort().join('_vs_');
-                                oScore += (opponentHistory[vs] || 0);
-                            });
-                        });
-                        o.totalScore = (pScore * 2) + oScore;
+            combos.forEach(o => {
+                let score = 0;
+                [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
+                    const key = pair.sort().join('&');
+                    score += (partnerHistory[key] || 0) * 50; 
+                });
+                o.t1.forEach(pA => {
+                    o.t2.forEach(pB => {
+                        const vs = [pA, pB].sort().join('_vs_');
+                        score += (opponentHistory[vs] || 0) * 10;
                     });
+                });
+                o.totalScore = score;
+            });
 
-                    const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
+            const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
 
-                    const p1 = [...best.t1].sort().join('&');
-                    const p2 = [...best.t2].sort().join('&');
-                    partnerHistory[p1] = (partnerHistory[p1] || 0) + 1;
-                    partnerHistory[p2] = (partnerHistory[p2] || 0) + 1;
-                    
-                    best.t1.forEach(pA => {
-                        best.t2.forEach(pB => {
-                            const vs = [pA, pB].sort().join('_vs_');
-                            opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
-                        });
-                    });
+            // Update Histories
+            [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
+                partnerHistory[k] = (partnerHistory[k] || 0) + 1;
+            });
+            best.t1.forEach(pA => {
+                best.t2.forEach(pB => {
+                    const vs = [pA, pB].sort().join('_vs_');
+                    opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
+                });
+            });
 
-                    [...best.t1, ...best.t2].forEach(p => { 
-                        playCounts[p]++; 
-                        roundParticipants.push(p); 
-                        waitCounts[p] = 0; 
-                    });
+            // Update Fairness
+            [...best.t1, ...best.t2].forEach(p => { 
+                playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; 
+            });
 
-                    newSchedule.push({ 
-                        id: `${r}-${c}`, 
-                        round: r, 
-                        court: c, 
-                        teamA: [...best.t1], 
-                        teamB: [...best.t2], 
-                        scoreA: null, 
-                        scoreB: null 
-                    });
-                }
-                playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
-            }
+            newSchedule.push({ 
+                id: `${r}-${c}`, round: r, court: c, 
+                teamA: [...best.t1], teamB: [...best.t2], 
+                scoreA: null, scoreB: null 
+            });
+        }
+        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
+    }
 
-            window.appState.schedule = newSchedule;
-            window.appState.isLocked = true;
-            document.getElementById('gen-btn').disabled = true;
-            document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
-            renderSchedule();
-        };
+    window.appState.schedule = newSchedule;
+    window.appState.isLocked = true;
+    document.getElementById('gen-btn').disabled = true;
+    document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
+    renderSchedule();
+};
 
         window.swapPlayer = function(matchId, playerName, fromTeam) {
             const match = window.appState.schedule.find(m => m.id === matchId);
