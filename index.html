@@ -62,45 +62,55 @@
                 </div>`;
         }
 
-window.generateSchedule = function() {
+window.generateSchedule = function () {
     if (window.appState.isLocked) return;
-    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
+
+    const roundsTarget = parseInt(document.getElementById("num-matches").value) || 12;
+    const courts = parseInt(document.getElementById("num-courts").value) || 1;
+
     const playerNames = window.appState.players.map(p => p.name);
-    const courts = parseInt(document.getElementById('num-courts').value) || 1;
-    
+
     const playCounts = {};
     const waitCounts = {};
-    const partnerHistory = {}; 
+    const partnerHistory = {};
     const opponentHistory = {};
-    const newSchedule = [];
 
-    playerNames.forEach(n => { playCounts[n] = 0; waitCounts[n] = 0; });
+    const schedule = [];
 
-    for (let r = 1; r <= 100; r++) {
-        if (newSchedule.length >= roundsTarget) break;
-        
-        // 1. SELECT: Sort by fairness, but add a random weight to EVERY player
-        // This stops the same 4 '0-game' players from being picked first every time.
-        let available = [...playerNames].sort((a,b) => {
-            const fairness = (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]);
-            return fairness || (Math.random() - 0.5);
+    playerNames.forEach(n => {
+        playCounts[n] = 0;
+        waitCounts[n] = 0;
+    });
+
+    function fairnessScore(pairKey) {
+        return Math.min((partnerHistory[pairKey] || 0) * 400, 1600);
+    }
+
+    function opponentScore(vsKey) {
+        return Math.min((opponentHistory[vsKey] || 0) * 40, 200);
+    }
+
+    function buildRound(roundNum) {
+        let available = [...playerNames].sort((a, b) => {
+            const scoreA = (waitCounts[a] * 12) - playCounts[a] + Math.random();
+            const scoreB = (waitCounts[b] * 12) - playCounts[b] + Math.random();
+            return scoreB - scoreA;
         });
-        
-        // 2. EXTRACT: Take only the players needed for this round
+
         let roundPool = available.slice(0, courts * 4);
-        
-        // 3. SHUFFLE: Fisher-Yates shuffle the 8 players so they swap courts
+
         for (let i = roundPool.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [roundPool[i], roundPool[j]] = [roundPool[j], roundPool[i]];
         }
-        
-        let roundParticipants = [];
+
+        const roundParticipants = [];
 
         for (let c = 1; c <= courts; c++) {
-            if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
+            if (roundPool.length < 4) break;
+
             const pool = roundPool.splice(0, 4);
-            
+
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -109,51 +119,89 @@ window.generateSchedule = function() {
 
             combos.forEach(o => {
                 let score = 0;
+
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
-                    const key = pair.sort().join('&');
-                    score += (partnerHistory[key] || 0) * 1000; // Nuclear penalty
+                    const key = pair.slice().sort().join("&");
+                    score += fairnessScore(key);
                 });
-                o.t1.forEach(pA => {
-                    o.t2.forEach(pB => {
-                        const vs = [pA, pB].sort().join('_vs_');
-                        score += (opponentHistory[vs] || 0) * 100; // Increased opponent penalty
+
+                o.t1.forEach(a => {
+                    o.t2.forEach(b => {
+                        const vs = [a, b].sort().join("_vs_");
+                        score += opponentScore(vs);
                     });
                 });
+
+                // bonus: prefer players who have fewer games overall
+                [...o.t1, ...o.t2].forEach(p => {
+                    score += playCounts[p] * 4;
+                });
+
                 o.totalScore = score;
             });
 
-            const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
+            const best = combos.sort((a, b) => a.totalScore - b.totalScore)[0];
 
-            // Update Histories
-            [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
+            [best.t1.sort().join("&"), best.t2.sort().join("&")].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
-            best.t1.forEach(pA => {
-                best.t2.forEach(pB => {
-                    const vs = [pA, pB].sort().join('_vs_');
+
+            best.t1.forEach(a => {
+                best.t2.forEach(b => {
+                    const vs = [a, b].sort().join("_vs_");
                     opponentHistory[vs] = (opponentHistory[vs] || 0) + 1;
                 });
             });
 
-            [...best.t1, ...best.t2].forEach(p => { 
-                playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; 
+            [...best.t1, ...best.t2].forEach(p => {
+                playCounts[p]++;
+                waitCounts[p] = 0;
+                roundParticipants.push(p);
             });
 
-            newSchedule.push({ 
-                id: `${r}-${c}`, round: r, court: c, 
-                teamA: [...best.t1], teamB: [...best.t2], 
-                scoreA: null, scoreB: null 
+            schedule.push({
+                id: `${roundNum}-${c}`,
+                round: roundNum,
+                court: c,
+                teamA: [...best.t1],
+                teamB: [...best.t2],
+                scoreA: null,
+                scoreB: null
             });
         }
-        playerNames.forEach(p => { if (!roundParticipants.includes(p)) waitCounts[p]++; });
+
+        playerNames.forEach(p => {
+            if (!roundParticipants.includes(p)) waitCounts[p]++;
+        });
     }
 
-    window.appState.schedule = newSchedule;
+    let attempts = 0;
+
+    while (schedule.length < roundsTarget && attempts < 300) {
+        attempts++;
+
+        const before = schedule.length;
+        buildRound(schedule.length + 1);
+
+        // fairness guard: if one player drifts 2+ games ahead, retry
+        const games = Object.values(playCounts);
+        if (Math.max(...games) - Math.min(...games) > 2) {
+            schedule.splice(before);
+            Object.keys(playCounts).forEach(p => (playCounts[p] = 0));
+            Object.keys(waitCounts).forEach(p => (waitCounts[p] = 0));
+            attempts++;
+        }
+    }
+
+    window.appState.schedule = schedule;
     window.appState.isLocked = true;
-    document.getElementById('gen-btn').disabled = true;
-    document.getElementById('gen-btn').classList.add('opacity-50', 'cursor-not-allowed');
+
+    document.getElementById("gen-btn").disabled = true;
+    document.getElementById("gen-btn").classList.add("opacity-50", "cursor-not-allowed");
+
     renderSchedule();
 };
+
 
         window.swapPlayer = function(matchId, playerName, fromTeam) {
             const match = window.appState.schedule.find(m => m.id === matchId);
