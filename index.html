@@ -79,17 +79,17 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. Shuffle EVERYONE first to break the "entry order" bias
-        let shuffledList = [...playerNames].sort(() => Math.random() - 0.5);
-        
-        // 2. Then sort by who needs to play (Wait counts / Play counts)
-        let available = shuffledList.sort((a,b) => 
-            (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b])
+        // 1. Get players based on fairness, but heavily randomized to break 'pods'
+        let available = [...playerNames].sort((a,b) => 
+            (waitCounts[b] - waitCounts[a]) || 
+            (playCounts[a] - playCounts[b]) || 
+            (Math.random() - 0.5)
         );
         
-        // 3. Take the players for THIS round and shuffle them again
-        // This is what forces players to switch between Court 1 and Court 2
-        let roundPool = available.slice(0, courts * 4).sort(() => Math.random() - 0.5);
+        let roundPool = available.slice(0, courts * 4);
+        
+        // 2. SHUFFLE the 8 players so they swap courts every round
+        roundPool.sort(() => Math.random() - 0.5);
         
         let roundParticipants = [];
 
@@ -97,6 +97,7 @@ window.generateSchedule = function() {
             if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
             const pool = roundPool.splice(0, 4);
             
+            // 3. Test all 3 possible pairings for these 4 players
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -107,19 +108,23 @@ window.generateSchedule = function() {
                 let score = 0;
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
                     const key = pair.sort().join('&');
-                    score += (partnerHistory[key] || 0) * 100; 
+                    // MASSIVE penalty for repeat partners to force new ones
+                    score += (partnerHistory[key] || 0) * 1000; 
                 });
                 o.t1.forEach(pA => {
                     o.t2.forEach(pB => {
                         const vs = [pA, pB].sort().join('_vs_');
-                        score += (opponentHistory[vs] || 0) * 25;
+                        // Moderate penalty for repeat opponents
+                        score += (opponentHistory[vs] || 0) * 50; 
                     });
                 });
                 o.totalScore = score;
             });
 
+            // Pick the combo with the absolute lowest history score
             const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
 
+            // 4. Update History
             [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
