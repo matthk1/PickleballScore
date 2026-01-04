@@ -68,7 +68,6 @@ window.generateSchedule = function() {
     const playerNames = window.appState.players.map(p => p.name);
     const courts = parseInt(document.getElementById('num-courts').value) || 1;
     
-    // Reset trackers
     const playCounts = {};
     const waitCounts = {};
     const partnerHistory = {}; 
@@ -80,26 +79,25 @@ window.generateSchedule = function() {
     for (let r = 1; r <= 100; r++) {
         if (newSchedule.length >= roundsTarget) break;
         
-        // 1. FAIRNESS: Get players who should play based on wait/play counts
-        let available = [...playerNames].sort((a,b) => 
-            (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b])
-        );
+        // 1. SELECT PLAYERS: We add a massive "Math.random()" to the sort.
+        // This ensures the order of the 8 players changes every single round.
+        let available = [...playerNames].sort((a, b) => {
+            const priority = (waitCounts[b] - waitCounts[a]) || (playCounts[a] - playCounts[b]);
+            // If play counts are equal, randomize completely
+            return priority || (Math.random() - 0.5);
+        });
         
-        // 2. THE FIX: Grab all players needed for the WHOLE round first
         let roundPool = available.slice(0, courts * 4);
-        
-        // 3. SHUFFLE: Randomize this pool so they don't stay on the same courts
+        // SHUFFLE the 8 players so they don't stay on the same courts
         roundPool = roundPool.sort(() => Math.random() - 0.5);
         
         let roundParticipants = [];
 
         for (let c = 1; c <= courts; c++) {
             if (roundPool.length < 4 || newSchedule.length >= roundsTarget) break;
-            
-            // Pick 4 from the shuffled pool
             const pool = roundPool.splice(0, 4);
             
-            // Optimization: Find the best partnership within these 4
+            // 2. TEST COMBINATIONS: Find the pairing that has happened LEAST
             const combos = [
                 { t1: [pool[0], pool[1]], t2: [pool[2], pool[3]] },
                 { t1: [pool[0], pool[2]], t2: [pool[1], pool[3]] },
@@ -110,12 +108,12 @@ window.generateSchedule = function() {
                 let score = 0;
                 [[o.t1[0], o.t1[1]], [o.t2[0], o.t2[1]]].forEach(pair => {
                     const key = pair.sort().join('&');
-                    score += (partnerHistory[key] || 0) * 50; 
+                    score += (partnerHistory[key] || 0) * 100; // Nuclear penalty for repeat partners
                 });
                 o.t1.forEach(pA => {
                     o.t2.forEach(pB => {
                         const vs = [pA, pB].sort().join('_vs_');
-                        score += (opponentHistory[vs] || 0) * 10;
+                        score += (opponentHistory[vs] || 0) * 25; // High penalty for repeat opponents
                     });
                 });
                 o.totalScore = score;
@@ -123,7 +121,7 @@ window.generateSchedule = function() {
 
             const best = combos.sort((a,b) => a.totalScore - b.totalScore)[0];
 
-            // Update Histories
+            // 3. RECORD HISTORY
             [best.t1.sort().join('&'), best.t2.sort().join('&')].forEach(k => {
                 partnerHistory[k] = (partnerHistory[k] || 0) + 1;
             });
@@ -134,7 +132,6 @@ window.generateSchedule = function() {
                 });
             });
 
-            // Update Fairness
             [...best.t1, ...best.t2].forEach(p => { 
                 playCounts[p]++; roundParticipants.push(p); waitCounts[p] = 0; 
             });
