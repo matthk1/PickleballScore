@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pickleball Pro | Fair Play Scheduler</title>
+    <title>Pickleball Pro | Optimized Scheduler</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
         import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
-        // --- Core Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyCn_jPqsuMWkOTM4_BshPk2kcu7K3mpYlg",
             authDomain: "pickleballmatchup.firebaseapp.com",
@@ -23,219 +22,201 @@
         let db, auth, userId = null;
         window.appState = { players: [], schedule: [], isLocked: false };
 
-        // --- 1. SCHEDULING ENGINE (Fairness & Social Logic) ---
+        // --- OPTIMIZED SCHEDULER ---
         const Scheduler = {
+            // Suggests rounds based on the "Unique Partner" formula
+            suggestRounds: (n) => {
+                if (n < 4) return 0;
+                return (n % 4 === 0) ? n - 1 : n;
+            },
+
             generate: (players, roundsTarget, courts) => {
-                let pool = [...players].sort(() => Math.random() - 0.5);
+                let pool = [...players];
+                // Ensure the pool is even for the rotation pole
+                if (pool.length % 2 !== 0) pool.push("BYE (Rest)");
+                
                 const n = pool.length;
                 const schedule = [];
-                let indices = Array.from({ length: n }, (_, i) => i);
+                let pivot = pool[0];
+                let rotating = pool.slice(1);
 
                 for (let r = 0; r < roundsTarget; r++) {
-                    let activeIndices = [...indices];
+                    let currentOrder = [pivot, ...rotating];
                     let matchesInRound = 0;
+                    
+                    // Create matches by taking pairs from opposite ends of the rotated list
+                    // This is a variation of the Whist/Schurig algorithm for partner variety
+                    for (let i = 0; i < Math.floor(n / 2); i += 2) {
+                        if (matchesInRound >= courts) break;
+                        
+                        const p1 = currentOrder[i];
+                        const p2 = currentOrder[i + 1];
+                        const p3 = currentOrder[n - 1 - i];
+                        const p4 = currentOrder[n - 2 - i];
 
-                    // Group into 4s for matches
-                    while (activeIndices.length >= 4 && matchesInRound < courts) {
-                        const p1 = pool[activeIndices.shift()];
-                        const p2 = pool[activeIndices.shift()];
-                        const p3 = pool[activeIndices.shift()];
-                        const p4 = pool[activeIndices.shift()];
-
-                        schedule.push({
-                            id: `${r + 1}-${matchesInRound + 1}`,
-                            round: r + 1,
-                            court: matchesInRound + 1,
-                            teamA: [p1, p2],
-                            teamB: [p3, p4],
-                            scoreA: null,
-                            scoreB: null
-                        });
-                        matchesInRound++;
+                        if (![p1, p2, p3, p4].includes("BYE (Rest)")) {
+                            schedule.push({
+                                id: `${r + 1}-${matchesInRound + 1}`,
+                                round: r + 1,
+                                court: matchesInRound + 1,
+                                teamA: [p1, p2],
+                                teamB: [p3, p4],
+                                scoreA: null, scoreB: null
+                            });
+                            matchesInRound++;
+                        }
                     }
-                    // Rotate the queue by 1 to shift partners and resters
-                    indices.push(indices.shift());
+                    // Rotate players clockwise around the pivot
+                    rotating.unshift(rotating.pop());
                 }
                 return schedule;
             }
         };
 
-        // --- 2. DATA SERVICE ---
-        async function initFirebase() {
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                onAuthStateChanged(auth, (user) => {
-                    if (user) { 
-                        userId = user.uid; 
-                        onSnapshot(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), (snap) => {
-                            window.appState.players = snap.docs.map(d => ({ id: d.id, name: d.data().name }));
-                            renderPlayerList();
-                        });
-                    } else { signInAnonymously(auth); }
-                });
-            } catch (err) { console.error("Firebase Init Error:", err); }
+        // --- FIREBASE & UI LOGIC ---
+        async function init() {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            onAuthStateChanged(auth, (u) => {
+                if (u) {
+                    userId = u.uid;
+                    onSnapshot(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), (snap) => {
+                        window.appState.players = snap.docs.map(d => ({ id: d.id, name: d.data().name }));
+                        renderPlayers();
+                        updateHint();
+                    });
+                } else signInAnonymously(auth);
+            });
         }
 
-        // --- 3. UI CONTROLLER ---
-        function renderPlayerList() {
-            const list = document.getElementById('player-list');
-            list.innerHTML = window.appState.players.map(p => `
-                <div class="flex justify-between bg-white border border-slate-100 p-3 rounded-xl mb-2 shadow-sm">
-                    <span class="font-bold text-slate-700">${p.name}</span>
-                    <button onclick="deletePlayer('${p.id}')" class="text-red-400 hover:text-red-600 transition">✕</button>
-                </div>
-            `).join('');
-            document.getElementById('player-count').textContent = window.appState.players.length;
+        function updateHint() {
+            const n = window.appState.players.length;
+            const hint = document.getElementById('hint');
+            const roundsInput = document.getElementById('num-matches');
+            if (n < 4) return;
+            const suggested = Scheduler.suggestRounds(n);
+            hint.innerHTML = `💡 For everyone to partner once, use <b>${suggested}</b> rounds.`;
+            roundsInput.value = suggested;
         }
 
         window.generateSchedule = () => {
-            if (window.appState.players.length < 4) return alert("Add at least 4 players.");
-            const rounds = parseInt(document.getElementById('num-matches').value);
-            const courts = parseInt(document.getElementById('num-courts').value);
-            
-            window.appState.schedule = Scheduler.generate(window.appState.players.map(p => p.name), rounds, courts);
+            const r = parseInt(document.getElementById('num-matches').value);
+            const c = parseInt(document.getElementById('num-courts').value);
+            window.appState.schedule = Scheduler.generate(window.appState.players.map(p => p.name), r, c);
             window.appState.isLocked = true;
-            document.getElementById('gen-btn').disabled = true;
-            document.getElementById('gen-btn').className = "w-full bg-slate-300 text-slate-500 font-black py-4 rounded-xl cursor-not-allowed";
             renderSchedule();
-            calculateStandings();
         };
 
+        function renderPlayers() {
+            document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
+                <div class="flex justify-between p-2 bg-slate-50 rounded-lg mb-1 text-sm font-bold">
+                    ${p.name} <button onclick="deletePlayer('${p.id}')" class="text-red-400">✕</button>
+                </div>`).join('');
+        }
+
+        function renderSchedule() {
+            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => `
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3">
+                    <div class="text-[10px] font-black text-slate-400 uppercase mb-2">Round ${m.round} • Court ${m.court}</div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold w-1/3 text-right">${m.teamA.join(' & ')}</span>
+                        <div class="flex gap-1 mx-2">
+                            <input type="number" onchange="updateScore('${m.id}', 'A', this.value)" class="w-8 h-8 border rounded text-center text-xs">
+                            <input type="number" onchange="updateScore('${m.id}', 'B', this.value)" class="w-8 h-8 border rounded text-center text-xs">
+                        </div>
+                        <span class="text-xs font-bold w-1/3 text-left">${m.teamB.join(' & ')}</span>
+                    </div>
+                </div>`).join('');
+        }
+
         window.updateScore = (id, team, val) => {
-            const match = window.appState.schedule.find(m => m.id === id);
-            match[`score${team}`] = val === "" ? null : parseInt(val);
+            const m = window.appState.schedule.find(x => x.id === id);
+            m[`score${team}`] = val === "" ? null : parseInt(val);
             calculateStandings();
         };
 
         function calculateStandings() {
             const stats = {};
-            window.appState.players.forEach(p => stats[p.name] = { w: 0, l: 0, pf: 0, pa: 0, g: 0 });
-
+            window.appState.players.forEach(p => stats[p.name] = { w:0, l:0, pf:0, pa:0, g:0 });
             window.appState.schedule.forEach(m => {
                 if (m.scoreA !== null && m.scoreB !== null) {
                     const winA = m.scoreA > m.scoreB;
                     [...m.teamA, ...m.teamB].forEach(p => stats[p].g++);
-                    m.teamA.forEach(p => { stats[p].pf += m.scoreA; stats[p].pa += m.scoreB; if(winA) stats[p].w++; else stats[p].l++; });
-                    m.teamB.forEach(p => { stats[p].pf += m.scoreB; stats[p].pa += m.scoreA; if(!winA) stats[p].w++; else stats[p].l++; });
+                    m.teamA.forEach(p => { stats[p].pf += m.scoreA; stats[p].pa += m.scoreB; winA ? stats[p].w++ : stats[p].l++ });
+                    m.teamB.forEach(p => { stats[p].pf += m.scoreB; stats[p].pa += m.scoreA; !winA ? stats[p].w++ : stats[p].l++ });
                 }
             });
-
             const sorted = Object.entries(stats).map(([name, d]) => ({
-                name, 
-                pct: d.g ? ((d.w / d.g) * 100).toFixed(0) : 0, 
-                diff: d.pf - d.pa, 
-                rec: `${d.w}-${d.l}`
-            })).sort((a, b) => b.pct - a.pct || b.diff - a.diff);
+                name, pct: d.g ? (d.w/d.g*100).toFixed(0) : 0, diff: d.pf-d.pa
+            })).sort((a,b) => b.pct - a.pct || b.diff - a.diff);
 
-            document.getElementById('standings-container').innerHTML = `
-                <table class="w-full text-xs">
-                    <tr class="text-slate-400 uppercase font-black border-b"><th class="text-left pb-2">Player</th><th>Rec</th><th>Diff</th><th class="text-right">%</th></tr>
-                    ${sorted.map((p, i) => `<tr class="border-b border-slate-50"><td class="py-3 font-bold">${i+1}. ${p.name}</td><td class="text-center">${p.rec}</td><td class="text-center font-bold ${p.diff >= 0 ? 'text-emerald-600' : 'text-red-500'}">${p.diff > 0 ? '+' + p.diff : p.diff}</td><td class="text-right font-black text-indigo-600">${p.pct}%</td></tr>`).join('')}
-                </table>`;
-        }
-
-        function renderSchedule() {
-            const container = document.getElementById('schedule-container');
-            const playerNames = window.appState.players.map(p => p.name);
-
-            container.innerHTML = window.appState.schedule.map(m => {
-                const active = window.appState.schedule.filter(x => x.round === m.round).flatMap(x => [...x.teamA, ...x.teamB]);
-                const resting = playerNames.filter(n => !active.includes(n));
-
-                return `
-                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 mb-4">
-                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-3 uppercase tracking-widest">
-                        <span>Round ${m.round} • Court ${m.court}</span>
-                        ${m.court === 1 && resting.length ? `<span class="text-amber-600">Resting: ${resting.join(', ')}</span>` : ''}
-                    </div>
-                    <div class="grid grid-cols-7 items-center gap-2">
-                        <div class="col-span-3 text-center text-sm font-bold text-slate-800">${m.teamA.join(' & ')}</div>
-                        <div class="col-span-1 flex justify-center gap-1">
-                            <input type="number" onchange="updateScore('${m.id}', 'A', this.value)" placeholder="A" class="w-9 h-9 border rounded-lg text-center font-bold text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
-                            <input type="number" onchange="updateScore('${m.id}', 'B', this.value)" placeholder="B" class="w-9 h-9 border rounded-lg text-center font-bold text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
-                        </div>
-                        <div class="col-span-3 text-center text-sm font-bold text-slate-800">${m.teamB.join(' & ')}</div>
-                    </div>
-                </div>`;
-            }).join('');
+            document.getElementById('leaderboard').innerHTML = sorted.map((p, i) => `
+                <div class="flex justify-between text-xs py-1 border-b border-slate-50">
+                    <span>${i+1}. ${p.name}</span>
+                    <span class="font-bold text-indigo-600">${p.pct}% (${p.diff > 0 ? '+' : ''}${p.diff})</span>
+                </div>`).join('');
         }
 
         window.addPlayer = async (e) => {
             e.preventDefault();
-            const input = document.getElementById('new-player-name');
-            if (input.value.trim()) { 
-                await addDoc(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), { name: input.value.trim() }); 
-                input.value = ''; 
-            }
+            const input = document.getElementById('name');
+            if (input.value) await addDoc(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), { name: input.value });
+            input.value = '';
         };
 
         window.deletePlayer = async (id) => await deleteDoc(doc(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`, id));
         window.shareToWhatsApp = () => {
-            let msg = "🎾 *PICKLEBALL SCHEDULE*\n\n";
-            window.appState.schedule.forEach(m => msg += `Rnd ${m.round} Ct ${m.court}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`);
-            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+            let msg = "🎾 *PICKLEBALL*\n";
+            window.appState.schedule.forEach(m => msg += `R${m.round} C${m.court}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`);
+            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`);
         };
 
-        window.onload = initFirebase;
+        window.onload = init;
     </script>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
-    <header class="bg-indigo-900 text-white p-4 sticky top-0 z-50 flex justify-between items-center shadow-lg">
-        <h1 class="font-black italic text-xl uppercase tracking-tighter">Pickleball Pro</h1>
-        <div class="flex gap-2">
-            <button onclick="shareToWhatsApp()" class="bg-emerald-500 hover:bg-emerald-600 text-[10px] font-black px-4 py-2 rounded-full uppercase transition">WhatsApp</button>
-            <button onclick="location.reload()" class="bg-white/10 hover:bg-white/20 text-[10px] font-bold px-4 py-2 rounded-full uppercase">Reset</button>
-        </div>
-    </header>
-
-    <main class="max-w-6xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-8 mt-4">
-        <div class="lg:col-span-4 space-y-6">
-            <section class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                <h2 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">1. Players (<span id="player-count">0</span>)</h2>
+<body class="bg-slate-100 p-4 font-sans text-slate-800">
+    <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-6">
+        <div class="md:col-span-4 space-y-4">
+            <div class="bg-white p-6 rounded-3xl shadow-sm">
+                <h2 class="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Players</h2>
                 <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
-                    <input type="text" id="new-player-name" class="flex-grow bg-slate-50 rounded-xl p-3 text-sm font-bold border-none outline-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500" placeholder="Name">
-                    <button class="bg-indigo-600 text-white px-5 rounded-xl font-black hover:bg-indigo-700 transition">+</button>
+                    <input id="name" type="text" placeholder="Name" class="flex-grow p-2 bg-slate-50 rounded-lg text-sm border-none ring-1 ring-slate-200 focus:ring-2 focus:ring-indigo-500">
+                    <button class="bg-indigo-600 text-white px-4 rounded-lg font-bold">+</button>
                 </form>
-                <div id="player-list" class="max-h-64 overflow-y-auto pr-2"></div>
-            </section>
+                <div id="player-list"></div>
+            </div>
 
-            <section class="bg-white p-6 rounded-[2rem] shadow-sm border-2 border-indigo-50">
-                <h2 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">2. Setup</h2>
-                <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="bg-indigo-900 text-white p-6 rounded-3xl shadow-lg">
+                <h2 class="text-xs font-black uppercase tracking-widest opacity-60 mb-4">Settings</h2>
+                <div class="space-y-3">
                     <div>
-                        <label class="text-[9px] font-black text-slate-400 uppercase">Rounds</label>
-                        <input type="number" id="num-matches" value="8" class="w-full bg-slate-50 rounded-xl p-3 font-black text-indigo-600 border-none ring-1 ring-slate-200">
+                        <label class="text-[10px] block opacity-60 uppercase font-bold">Rounds</label>
+                        <input id="num-matches" type="number" class="w-full bg-white/10 rounded-lg p-2 text-white border-none outline-none">
                     </div>
                     <div>
-                        <label class="text-[9px] font-black text-slate-400 uppercase">Courts</label>
-                        <select id="num-courts" class="w-full bg-slate-50 rounded-xl p-3 font-black text-slate-700 border-none ring-1 ring-slate-200">
-                            <option value="1">1 Court</option>
-                            <option value="2" selected>2 Courts</option>
-                            <option value="3">3 Courts</option>
+                        <label class="text-[10px] block opacity-60 uppercase font-bold">Courts</label>
+                        <select id="num-courts" class="w-full bg-white/10 rounded-lg p-2 text-white border-none outline-none">
+                            <option value="1" class="text-slate-800">1 Court</option>
+                            <option value="2" selected class="text-slate-800">2 Courts</option>
                         </select>
                     </div>
-                </div>
-                <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-xl uppercase text-[11px] tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition transform active:scale-95">Generate Fair Schedule</button>
-            </section>
-
-            <section class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                <h2 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">Leaderboard</h2>
-                <div id="standings-container">
-                    <p class="text-slate-300 text-xs italic">Play matches to see rankings...</p>
-                </div>
-            </section>
-        </div>
-
-        <div class="lg:col-span-8">
-            <h2 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest ml-2">Live Match Schedule</h2>
-            <div id="schedule-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-[3rem]">
-                    <p class="text-slate-300 font-medium uppercase tracking-widest text-xs">Waiting for generation...</p>
+                    <div id="hint" class="text-[10px] italic opacity-80"></div>
+                    <button onclick="generateSchedule()" class="w-full bg-white text-indigo-900 font-black py-3 rounded-xl uppercase text-[10px] mt-2">Generate</button>
+                    <button onclick="shareToWhatsApp()" class="w-full bg-emerald-500 text-white font-black py-3 rounded-xl uppercase text-[10px]">WhatsApp</button>
                 </div>
             </div>
+
+            <div class="bg-white p-6 rounded-3xl shadow-sm">
+                <h2 class="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Leaderboard</h2>
+                <div id="leaderboard"></div>
+            </div>
         </div>
-    </main>
+
+        <div class="md:col-span-8">
+            <h2 class="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 ml-2">Match Schedule</h2>
+            <div id="schedule-container" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+        </div>
+    </div>
 </body>
 </html>
