@@ -3,136 +3,248 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pickleball Pro | Restored Stable</title>
+    <title>Pickleball Pro Scheduler</title>
     <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-50 p-4 font-sans text-slate-800">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 
-    <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-6">
-        <div class="md:col-span-4 space-y-4">
-            
-            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
-                <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">1. Players</h2>
-                <div class="flex gap-2 mb-4">
-                    <input id="name-input" type="text" placeholder="Add name..." class="flex-grow p-3 bg-slate-50 rounded-xl text-sm border-none ring-1 ring-slate-200 outline-none">
-                    <button onclick="addPlayer()" class="bg-indigo-600 text-white px-5 rounded-xl font-bold">+</button>
-                </div>
-                <div id="player-list"></div>
-            </div>
+        const firebaseConfig = {
+            apiKey: "AIzaSyCn_jPqsuMWkOTM4_BshPk2kcu7K3mpYlg", 
+            authDomain: "pickleballmatchup.firebaseapp.com",
+            projectId: "pickleballmatchup",
+            storageBucket: "pickleballmatchup.firebasestorage.app",
+            messagingSenderId: "413178065158",
+            appId: "1:413178065158:web:c98dbd1f80bc8dadfbae87"
+        };
 
-            <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
-                <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">2. Setup</h2>
-                <div class="space-y-4">
-                    <input id="num-matches" type="number" class="w-full bg-slate-50 rounded-xl p-3 text-indigo-900 font-bold outline-none ring-1 ring-slate-200">
-                    <div id="hint-area"></div>
-                    <button onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest shadow-lg">Generate Schedule</button>
-                </div>
-            </div>
+        const appId = firebaseConfig.appId;
+        let db, auth, userId = null;
+        window.appState = { players: [], schedule: [], standings: {}, isLocked: false };
 
-        </div>
-
-        <div class="md:col-span-8">
-            <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest ml-4">Live Rotation</h2>
-            <div id="schedule-container" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
-        </div>
-    </div>
-
-    <script>
-        // Use a simple array like we did in the beginning
-        let players = [];
-
-        function addPlayer() {
-            const input = document.getElementById('name-input');
-            const name = input.value.trim();
-            if (name) {
-                players.push(name);
-                input.value = '';
-                renderPlayers();
-                updateMath();
-            }
-        }
-
-        function deletePlayer(index) {
-            players.splice(index, 1);
-            renderPlayers();
-            updateMath();
-        }
-
-        function renderPlayers() {
-            const list = document.getElementById('player-list');
-            list.innerHTML = players.map((p, i) => `
-                <div class="flex justify-between p-2 bg-white border rounded-xl mb-1 text-xs font-bold shadow-sm">
-                    ${p} <button onclick="deletePlayer(${i})" class="text-red-400 px-2">✕</button>
-                </div>`).join('');
-        }
-
-        function updateMath() {
-            const n = players.length;
-            const matchInput = document.getElementById('num-matches');
-            const hintArea = document.getElementById('hint-area');
-
-            // THE 6-PLAYER RULE: FORCED 10
-            let suggested = 0;
-            if (n === 6) {
-                suggested = 10;
-            } else if (n >= 4) {
-                suggested = (n % 4 === 0) ? n - 1 : n;
-            }
-
-            if (n >= 4) {
-                matchInput.value = suggested;
-                hintArea.innerHTML = `
-                    <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2">
-                        <p class="text-indigo-900 font-bold text-[11px]">Math Goal: ${suggested} matches.</p>
-                        <p class="text-emerald-700 font-bold text-[11px] italic">Optimized for variety.</p>
-                    </div>`;
-            } else {
-                hintArea.innerHTML = '';
-            }
-        }
-
-        function generateSchedule() {
-            const r = parseInt(document.getElementById('num-matches').value);
-            if (players.length < 4) return;
-
-            let schedule = [];
-            let pool = [...players];
-            
-            for (let i = 0; i < r; i++) {
-                // Pairing logic: Team A (1&3) vs Team B (2&4)
-                schedule.push({
-                    round: i + 1,
-                    teamA: [pool[0], pool[2]],
-                    teamB: [pool[1], pool[3]]
+        async function initFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                onAuthStateChanged(auth, (user) => {
+                    if (user) { userId = user.uid; loadPlayers(); } 
+                    else { signInAnonymously(auth); }
                 });
-                
-                // Classic rotation that worked before
-                let first = pool.shift();
-                pool.push(first);
-                // Extra jump for 6 players to avoid repeats
-                if (players.length === 6 && i % 2 === 0) {
-                    pool.push(pool.shift());
+            } catch (err) { console.error("Firebase Init Error:", err); }
+        }
+
+        function getPlayersRef() { return collection(db, `artifacts/${appId}/users/${userId}/pickleball_players`); }
+
+        async function loadPlayers() {
+            onSnapshot(getPlayersRef(), (snap) => {
+                window.appState.players = snap.docs.map(d => ({ id: d.id, name: d.data().name }));
+                renderPlayerList();
+                updateMatchHint();
+            });
+        }
+
+        // --- ATTACHED TO WINDOW TO FIX BUTTON VISIBILITY ---
+
+        window.updateMatchHint = function() {
+            const n = window.appState.players.length;
+            const hintDiv = document.getElementById('match-hint');
+            const matchInput = document.getElementById('num-matches');
+            if (n < 4) { hintDiv.innerHTML = ""; return; }
+            
+            // THE FIX: If 6 players, suggest 10 matches.
+            let perfectRounds = (n === 6) ? 10 : (n % 4 === 0 ? n - 1 : n);
+            matchInput.value = perfectRounds;
+            
+            hintDiv.innerHTML = `
+                <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2 text-[11px]">
+                    <p class="text-indigo-900 font-bold">Fairness Alert:</p>
+                    <p class="text-gray-600">To ensure everyone partners with everyone else, set matches to <b>${perfectRounds}</b>.</p>
+                </div>`;
+        }
+
+        window.generateSchedule = function() {
+            if (window.appState.isLocked) return;
+            const playerNames = window.appState.players.map(p => p.name);
+            let pool = [...playerNames].sort(() => Math.random() - 0.5);
+            while (pool.length % 4 !== 0) { pool.push("BYE (Rest)"); }
+
+            const n = pool.length;
+            const roundsTarget = parseInt(document.getElementById('num-matches').value);
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
+            const newSchedule = [];
+            let positions = Array.from({length: n}, (_, i) => i);
+
+            for (let r = 0; r < roundsTarget; r++) {
+                let roundMatchups = [];
+                for (let i = 0; i < n / 4; i++) {
+                    const p1 = pool[positions[i]], p2 = pool[positions[i + n/2]], 
+                          p3 = pool[positions[i + n/4]], p4 = pool[positions[i + 3*n/4]];
+                    if (p1 !== "BYE (Rest)" && p2 !== "BYE (Rest)" && p3 !== "BYE (Rest)" && p4 !== "BYE (Rest)") {
+                        roundMatchups.push({ teamA: [p1, p2], teamB: [p3, p4] });
+                    }
                 }
+                for (let c = 0; c < roundMatchups.length; c++) {
+                    if (c >= courts) break;
+                    newSchedule.push({ id: `${r+1}-${c+1}`, round: r+1, court: c+1, teamA: roundMatchups[c].teamA, teamB: roundMatchups[c].teamB, scoreA: null, scoreB: null });
+                }
+                let rest = positions.slice(1);
+                rest.unshift(rest.pop());
+                positions = [positions[0], ...rest];
             }
 
-            const container = document.getElementById('schedule-container');
-            container.innerHTML = schedule.map(m => {
-                const active = [...m.teamA, ...m.teamB];
-                const resting = players.filter(name => !active.includes(name));
+            window.appState.schedule = newSchedule;
+            window.appState.isLocked = true;
+            document.getElementById('gen-btn').disabled = true;
+            renderSchedule();
+            calculateStandings();
+        };
+
+        window.addPlayer = async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('new-player-name');
+            if (input.value.trim()) { await addDoc(getPlayersRef(), { name: input.value.trim() }); input.value = ''; }
+        };
+
+        window.deletePlayer = async (id) => { await deleteDoc(doc(getPlayersRef(), id)); };
+        
+        window.swapPlayer = function(matchId, playerName, fromTeam) {
+            const match = window.appState.schedule.find(m => m.id === matchId);
+            if (fromTeam === 'A') {
+                const pB = match.teamB[0];
+                match.teamA = match.teamA.map(p => p === playerName ? pB : p);
+                match.teamB[0] = playerName;
+            } else {
+                const pA = match.teamA[0];
+                match.teamB = match.teamB.map(p => p === playerName ? pA : p);
+                match.teamA[0] = playerName;
+            }
+            renderSchedule();
+            calculateStandings();
+        };
+
+        window.recordScore = function(id) {
+            const m = window.appState.schedule.find(match => match.id === id);
+            m.scoreA = parseInt(document.getElementById(`score-a-${id}`).value) || 0;
+            m.scoreB = parseInt(document.getElementById(`score-b-${id}`).value) || 0;
+            calculateStandings();
+        };
+
+        function calculateStandings() {
+            const stats = {};
+            window.appState.players.forEach(p => stats[p.name] = { wins: 0, losses: 0, pf: 0, pa: 0, games: 0 });
+            window.appState.schedule.forEach(m => {
+                if (m.scoreA !== null && m.scoreB !== null && (m.scoreA > 0 || m.scoreB > 0)) {
+                    const winA = m.scoreA > m.scoreB;
+                    m.teamA.forEach(p => { stats[p].games++; stats[p].pf += m.scoreA; stats[p].pa += m.scoreB; if(winA) stats[p].wins++; else stats[p].losses++; });
+                    m.teamB.forEach(p => { stats[p].games++; stats[p].pf += m.scoreB; stats[p].pa += m.scoreA; if(!winA) stats[p].wins++; else stats[p].losses++; });
+                }
+            });
+            renderStandings(stats);
+        }
+
+        function renderStandings(stats) {
+            const sorted = Object.entries(stats).map(([name, d]) => ({
+                name, winPct: d.games ? ((d.wins/d.games)*100).toFixed(0) : 0, diff: d.pf - d.pa, record: `${d.wins}-${d.losses}`
+            })).sort((a,b) => b.winPct - a.winPct || b.diff - a.diff);
+            document.getElementById('standings-container').innerHTML = `
+                <table class="w-full text-left text-xs">
+                    <tr class="text-gray-400 uppercase font-black border-b border-gray-100"><th class="pb-2">Player</th><th class="pb-2">Rec</th><th class="pb-2">Diff</th><th class="pb-2 text-right">%</th></tr>
+                    ${sorted.map((p, i) => `<tr class="border-b border-gray-50 last:border-0"><td class="py-2 font-bold">${i+1}. ${p.name}</td><td>${p.record}</td><td class="font-bold ${p.diff >=0 ? 'text-emerald-600':'text-red-500'}">${p.diff > 0 ? '+'+p.diff : p.diff}</td><td class="text-right font-black text-indigo-600">${p.winPct}%</td></tr>`).join('')}
+                </table>`;
+        }
+
+        function renderSchedule() {
+            const courts = parseInt(document.getElementById('num-courts').value) || 1;
+            const playerNames = window.appState.players.map(p => p.name);
+            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+                const activeInRound = window.appState.schedule.filter(match => match.round === m.round).flatMap(match => [...match.teamA, ...match.teamB]);
+                const waiting = playerNames.filter(n => !activeInRound.includes(n));
+                const teamUI = (team, side) => team.map(p => `<div class="flex items-center justify-center gap-1 font-black"><span class="truncate">${p}</span><button onclick="swapPlayer('${m.id}', '${p}', '${side}')" class="text-indigo-300 hover:text-indigo-600">⇄</button></div>`).join('');
                 return `
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3">
-                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-2 uppercase">
-                        <span>Round ${m.round}</span>
-                        ${resting.length ? `<span class="text-amber-600 bg-amber-50 px-2 rounded-full">Wait: ${resting.join(', ')}</span>` : ''}
+                <div class="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 mb-6">
+                    <div class="flex justify-between text-[10px] font-black text-gray-400 mb-3 uppercase tracking-widest">
+                        <span>Round ${m.round}${courts > 1 ? ' • Ct '+m.court : ''}</span>
+                        ${waiting.length && (courts === 1 || m.court === 1) ? `<span class="text-amber-600 italic">Wait: ${waiting.join(', ')}</span>` : ''}
                     </div>
-                    <div class="flex justify-between items-center text-xs font-bold text-indigo-900 px-1">
-                        <span class="w-[45%] text-right">${m.teamA.join(' & ')}</span>
-                        <span class="text-slate-200 mx-2 italic">vs</span>
-                        <span class="w-[45%] text-left">${m.teamB.join(' & ')}</span>
+                    <div class="grid grid-cols-7 items-center gap-1">
+                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamA, 'A')}</div>
+                        <div class="col-span-1 flex justify-center gap-1">
+                            <input type="number" id="score-a-${m.id}" value="${m.scoreA||''}" onchange="recordScore('${m.id}')" class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                            <input type="number" id="score-b-${m.id}" value="${m.scoreB||''}" onchange="recordScore('${m.id}')" class="w-8 h-8 border border-gray-200 rounded text-center font-black text-xs">
+                        </div>
+                        <div class="col-span-3 text-center text-[14px]">${teamUI(m.teamB, 'B')}</div>
                     </div>
                 </div>`;
             }).join('');
         }
+
+        window.shareToWhatsApp = function() {
+            let msg = "🎾 *PICKLEBALL SCHEDULE*\n\n";
+            window.appState.schedule.forEach(m => { msg += `Rnd ${m.round}: ${m.teamA.join('&')} vs ${m.teamB.join('&')}\n`; });
+            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+        };
+
+        window.renderPlayerList = function() {
+            document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
+                <div class="flex justify-between bg-gray-50 p-2 rounded mb-1 text-xs font-bold"><span>${p.name}</span><button onclick="deletePlayer('${p.id}')" class="text-red-400">✕</button></div>`).join('');
+            document.getElementById('player-count').textContent = window.appState.players.length;
+        };
+
+        window.confirmReset = () => { if (confirm("Reset everything?")) location.reload(); };
+        window.onload = initFirebase;
     </script>
+</head>
+<body class="bg-gray-100 min-h-screen pb-10 font-sans">
+    <header class="bg-indigo-900 text-white p-4 sticky top-0 z-50 flex justify-between items-center shadow-lg">
+        <h1 class="font-black italic text-lg uppercase tracking-tighter">Pickleball Pro</h1>
+        <div class="flex gap-2">
+            <button onclick="shareToWhatsApp()" class="bg-emerald-500 text-[10px] font-black px-3 py-2 rounded-full uppercase">WhatsApp</button>
+            <button onclick="confirmReset()" class="bg-white/20 text-[10px] font-bold px-3 py-2 rounded-full uppercase">Reset</button>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+        <div class="space-y-6">
+            <div class="bg-white p-5 rounded-[2rem] shadow-sm">
+                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">1. Players (<span id="player-count">0</span>)</h2>
+                <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
+                    <input type="text" id="new-player-name" class="flex-grow bg-gray-50 rounded-xl p-3 font-bold border border-gray-100" placeholder="Name">
+                    <button class="bg-indigo-600 text-white px-4 rounded-xl font-black">+</button>
+                </form>
+                <div id="player-list"></div>
+            </div>
+
+            <div class="bg-white p-5 rounded-[2rem] shadow-sm border-2 border-indigo-50">
+                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">2. Setup</h2>
+                <div class="grid grid-cols-2 gap-4 mb-2">
+                    <div>
+                        <label class="text-[9px] font-black text-gray-400 uppercase">Matches</label>
+                        <input type="number" id="num-matches" value="10" class="w-full bg-gray-50 rounded-xl p-3 font-black text-indigo-600">
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-black text-gray-400 uppercase">Courts</label>
+                        <select id="num-courts" onchange="updateMatchHint()" class="w-full bg-gray-50 rounded-xl p-3 font-black text-gray-700">
+                            <option value="1">1 Court</option>
+                            <option value="2" selected>2 Courts</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="match-hint"></div>
+                <button id="gen-btn" onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-xl uppercase text-[11px] tracking-widest mt-4 shadow-xl">Generate Schedule</button>
+            </div>
+
+            <div class="bg-white p-5 rounded-[2rem] shadow-sm">
+                <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">Rankings</h2>
+                <div id="standings-container"></div>
+            </div>
+        </div>
+
+        <div>
+            <h2 class="text-[10px] font-black text-gray-400 uppercase mb-4 tracking-widest">Live Schedule</h2>
+            <div id="schedule-container"></div>
+        </div>
+    </main>
 </body>
 </html>
