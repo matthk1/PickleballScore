@@ -25,41 +25,46 @@
         let userId = null;
         window.appState = { players: [], schedule: [] };
 
-        // --- THE HINT LOGIC (Strictly 10 for 6) ---
+        // --- 1. THE HINT LOGIC (STRICTLY 10 FOR 6) ---
         window.updateHint = () => {
             const n = window.appState.players.length;
+            // The core fix: force 10 rounds for 6 players
             let suggested = (n === 6) ? 10 : (n % 4 === 0 ? n - 1 : n);
             if (n < 4) suggested = 0;
 
             const input = document.getElementById('num-matches');
             const hintBox = document.getElementById('hint-box');
 
-            if (n >= 4) {
+            if (n >= 4 && hintBox && input) {
                 input.value = suggested;
                 hintBox.innerHTML = `
-                    <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2">
+                    <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2 shadow-inner">
                         <p class="text-indigo-900 font-bold text-[11px]">Math Goal: ${suggested} matches for full variety.</p>
-                        <p class="text-emerald-700 font-bold text-[11px] italic">Recommended: ${suggested} matches @ 11 points (2 hours).</p>
+                        <p class="text-emerald-700 font-bold text-[11px] italic font-medium">Recommended: ${suggested} matches @ 11 points (2 hours).</p>
                     </div>
                 `;
-            } else {
-                hintBox.innerHTML = '<p class="text-[10px] text-slate-400 p-2 italic text-center">Add 4 players to start...</p>';
+            } else if (hintBox) {
+                hintBox.innerHTML = '<p class="text-[10px] text-slate-400 p-2 italic text-center">Add 4 players to calculate matches...</p>';
             }
         };
 
-        // --- PLAYER ACTIONS (Attached to window for HTML access) ---
+        // --- 2. PLAYER ACTIONS (Connected to Global Window) ---
         window.addPlayer = async (e) => {
-            if(e) e.preventDefault();
+            if (e) e.preventDefault();
             const input = document.getElementById('name');
             if (input.value && userId) {
-                await addDoc(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), { name: input.value });
-                input.value = '';
+                try {
+                    await addDoc(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), { name: input.value });
+                    input.value = '';
+                } catch (err) { console.error("Error adding:", err); }
             }
         };
 
         window.deletePlayer = async (id) => {
             if (userId) {
-                await deleteDoc(doc(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`, id));
+                try {
+                    await deleteDoc(doc(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`, id));
+                } catch (err) { console.error("Error deleting:", err); }
             }
         };
 
@@ -78,48 +83,54 @@
                     teamA: [p[0], p[2]],
                     teamB: [p[1], p[3]]
                 });
-                pool.push(pool.shift());
+                pool.push(pool.shift()); // Rotational logic
             }
             window.appState.schedule = schedule;
             renderSchedule();
         };
 
-        // --- RENDER FUNCTIONS ---
+        // --- 3. RENDER UI ---
         function renderPlayers() {
-            document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
-                <div class="flex justify-between p-2 bg-white border rounded-xl mb-1 text-xs font-bold shadow-sm">
-                    ${p.name} <button onclick="deletePlayer('${p.id}')" class="text-red-400 px-2 font-black">✕</button>
+            const list = document.getElementById('player-list');
+            if (!list) return;
+            list.innerHTML = window.appState.players.map(p => `
+                <div class="flex justify-between p-2.5 bg-white border border-slate-100 rounded-xl mb-1.5 text-xs font-bold shadow-sm">
+                    <span class="text-slate-700">${p.name}</span>
+                    <button onclick="window.deletePlayer('${p.id}')" class="text-red-400 hover:text-red-600 px-2 font-black transition-colors text-sm">✕</button>
                 </div>`).join('');
         }
 
         function renderSchedule() {
+            const container = document.getElementById('schedule-container');
+            if (!container) return;
             const playerNames = window.appState.players.map(p => p.name);
-            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+            
+            container.innerHTML = window.appState.schedule.map(m => {
                 const active = [...m.teamA, ...m.teamB];
                 const resting = playerNames.filter(name => !active.includes(name));
                 return `
-                <div class="bg-white p-4 rounded-3xl shadow-sm border border-slate-100 mb-3">
-                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-2 uppercase">
+                <div class="bg-white p-4 rounded-[1.5rem] shadow-sm border border-slate-100 mb-3">
+                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-2 uppercase tracking-wider">
                         <span>Round ${m.round}</span>
-                        ${resting.length ? `<span class="text-amber-600 bg-amber-50 px-2 rounded-full">Wait: ${resting.join(', ')}</span>` : ''}
+                        ${resting.length ? `<span class="text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full">Wait: ${resting.join(', ')}</span>` : ''}
                     </div>
-                    <div class="flex justify-between items-center text-xs font-bold text-indigo-900">
-                        <span class="w-1/3 text-right">${m.teamA.join(' & ')}</span>
-                        <span class="text-slate-300 mx-2 text-[9px]">vs</span>
-                        <span class="w-1/3 text-left">${m.teamB.join(' & ')}</span>
+                    <div class="flex justify-between items-center text-xs font-bold text-indigo-900 px-1">
+                        <span class="w-[45%] text-right">${m.teamA.join(' & ')}</span>
+                        <span class="text-slate-300 italic text-[9px] font-normal mx-2">vs</span>
+                        <span class="w-[45%] text-left">${m.teamB.join(' & ')}</span>
                     </div>
                 </div>`;
             }).join('');
         }
 
-        // --- INITIALIZE ---
+        // --- 4. STARTUP ---
         onAuthStateChanged(auth, (u) => {
             if (u) {
                 userId = u.uid;
                 onSnapshot(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), (snap) => {
                     window.appState.players = snap.docs.map(d => ({ id: d.id, name: d.data().name }));
                     renderPlayers();
-                    window.updateHint(); // This triggers the hint update
+                    window.updateHint(); // Force the math to update
                 });
             } else {
                 signInAnonymously(auth);
@@ -127,14 +138,14 @@
         });
     </script>
 </head>
-<body class="bg-slate-50 p-4 font-sans text-slate-800">
+<body class="bg-slate-50 p-4 font-sans text-slate-800 antialiased">
     <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-6">
-        <div class="md:col-span-4 space-y-4">
+        <div class="md:col-span-4 space-y-5">
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
                 <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">1. Players</h2>
-                <form onsubmit="addPlayer(event)" class="flex gap-2 mb-4">
-                    <input id="name" type="text" placeholder="Add name..." class="flex-grow p-3 bg-slate-50 rounded-xl text-sm border-none ring-1 ring-slate-200 outline-none">
-                    <button type="submit" class="bg-indigo-600 text-white px-5 rounded-xl font-bold">+</button>
+                <form onsubmit="window.addPlayer(event)" class="flex gap-2 mb-4">
+                    <input id="name" type="text" autocomplete="off" placeholder="Add name..." class="flex-grow p-3 bg-slate-50 rounded-xl text-sm border-none ring-1 ring-slate-200 outline-none focus:ring-indigo-500 transition-all">
+                    <button type="submit" class="bg-indigo-600 text-white px-5 rounded-xl font-black hover:bg-indigo-700 transition-all shadow-md active:scale-95">+</button>
                 </form>
                 <div id="player-list"></div>
             </div>
@@ -143,19 +154,19 @@
                 <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">2. Setup</h2>
                 <div class="space-y-4">
                     <div>
-                        <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Number of Matches</label>
-                        <input id="num-matches" type="number" class="w-full bg-slate-50 rounded-xl p-3 text-indigo-900 font-bold outline-none border-none ring-1 ring-slate-200">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase mb-1.5 block">Matches</label>
+                        <input id="num-matches" type="number" class="w-full bg-slate-50 rounded-xl p-3 text-indigo-900 font-extrabold outline-none border-none ring-1 ring-slate-200">
                     </div>
                     
                     <div id="hint-box"></div>
 
-                    <button onclick="generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest shadow-lg active:scale-95 transition-all">Generate Schedule</button>
+                    <button onclick="window.generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] tracking-widest shadow-lg hover:bg-indigo-700 active:scale-95 transition-all">Generate Schedule</button>
                 </div>
             </div>
         </div>
 
         <div class="md:col-span-8">
-            <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest ml-4">Live Schedule</h2>
+            <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest ml-4">Live Rotation</h2>
             <div id="schedule-container" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
         </div>
     </div>
