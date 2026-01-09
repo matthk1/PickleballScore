@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pickleball Pro | Variety Stats</title>
+    <title>Pickleball Pro | Fully Connected</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
@@ -25,36 +25,8 @@
         let userId = null;
         window.appState = { players: [], schedule: [] };
 
-        // --- 1. IMPROVED ROTATION LOGIC ---
-        window.generateSchedule = () => {
-            const r = parseInt(document.getElementById('num-matches').value);
-            const players = window.appState.players.map(p => p.name);
-            if (players.length < 4) return;
-
-            const schedule = [];
-            let pool = [...players];
-            
-            for (let i = 0; i < r; i++) {
-                let p = [...pool];
-                // For better variety: Team A (1&3) vs Team B (2&4)
-                schedule.push({ 
-                    round: i + 1, 
-                    teamA: [p[0], p[2]], 
-                    teamB: [p[1], p[3]] 
-                });
-
-                // Advanced Rotation: Fixed Pivot + Double Jump
-                let first = pool.shift();
-                pool.push(first);
-                if (i % 2 === 0) pool.push(pool.shift()); 
-            }
-            window.appState.schedule = schedule;
-            renderSchedule();
-            calculateVariety();
-        };
-
-        // --- 2. VARIETY STATS CALCULATION ---
-        function calculateVariety() {
+        // --- 1. THE VARIETY LOGIC ---
+        const calculateVariety = () => {
             const players = window.appState.players.map(p => p.name);
             const stats = {};
             players.forEach(p => {
@@ -63,61 +35,26 @@
             });
 
             window.appState.schedule.forEach(m => {
-                const allInRound = [...m.teamA, ...m.teamB];
-                allInRound.forEach(p => stats[p].games++);
-                
-                // Track Partners
-                stats[m.teamA[0]].partners[m.teamA[1]]++;
-                stats[m.teamA[1]].partners[m.teamA[0]]++;
-                stats[m.teamB[0]].partners[m.teamB[1]]++;
-                stats[m.teamB[1]].partners[m.teamB[0]]++;
+                [...m.teamA, ...m.teamB].forEach(p => { if(stats[p]) stats[p].games++; });
+                if(stats[m.teamA[0]]) stats[m.teamA[0]].partners[m.teamA[1]]++;
+                if(stats[m.teamA[1]]) stats[m.teamA[1]].partners[m.teamA[0]]++;
+                if(stats[m.teamB[0]]) stats[m.teamB[0]].partners[m.teamB[1]]++;
+                if(stats[m.teamB[1]]) stats[m.teamB[1]].partners[m.teamB[0]]++;
             });
 
-            const html = Object.entries(stats).map(([name, data]) => {
-                const partnerList = Object.entries(data.partners)
-                    .map(([p, count]) => `<span class="${count === 0 ? 'text-red-500' : 'text-slate-500'}">${p[0]}:${count}</span>`)
-                    .join(' ');
-                return `
-                    <div class="text-[10px] border-b border-slate-100 py-1.5 flex justify-between">
-                        <span class="font-bold w-16">${name}</span>
-                        <span class="w-8 text-indigo-600 font-black">${data.games}g</span>
-                        <div class="flex-grow text-right space-x-2 font-mono">${partnerList}</div>
-                    </div>`;
-            }).join('');
-            document.getElementById('variety-stats').innerHTML = html;
-        }
-
-        // --- 3. EXISTING UI RENDERING ---
-        function renderPlayers() {
-            document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
-                <div class="flex justify-between p-2 bg-white border rounded-xl mb-1 text-xs font-bold shadow-sm">
-                    ${p.name} <button onclick="window.deletePlayer('${p.id}')" class="text-red-400 px-2 font-black">✕</button>
+            document.getElementById('variety-stats').innerHTML = Object.entries(stats).map(([name, data]) => `
+                <div class="text-[10px] border-b border-indigo-800/30 py-1.5 flex justify-between">
+                    <span class="font-bold w-16 truncate">${name}</span>
+                    <span class="w-8 text-emerald-400 font-black">${data.games}g</span>
+                    <div class="flex-grow text-right space-x-2 font-mono">
+                        ${Object.entries(data.partners).map(([p, c]) => `<span class="${c === 0 ? 'text-rose-400' : 'text-indigo-200'}">${p[0]}:${c}</span>`).join('')}
+                    </div>
                 </div>`).join('');
-        }
+        };
 
-        function renderSchedule() {
-            const playerNames = window.appState.players.map(p => p.name);
-            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
-                const active = [...m.teamA, ...m.teamB];
-                const resting = playerNames.filter(name => !active.includes(name));
-                return `
-                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3">
-                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-2 uppercase">
-                        <span>Round ${m.round}</span>
-                        ${resting.length ? `<span class="text-amber-600 bg-amber-50 px-2 rounded-full">Wait: ${resting.join(', ')}</span>` : ''}
-                    </div>
-                    <div class="flex justify-between items-center text-xs font-bold text-indigo-900">
-                        <span class="w-1/3 text-right">${m.teamA.join(' & ')}</span>
-                        <span class="text-slate-200 mx-2 font-normal">vs</span>
-                        <span class="w-1/3 text-left">${m.teamB.join(' & ')}</span>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        // --- FIREBASE BOILERPLATE ---
-        window.addPlayer = async (e) => {
-            if (e) e.preventDefault();
+        // --- 2. PLAYER ACTIONS ---
+        const addPlayer = async (e) => {
+            e.preventDefault();
             const input = document.getElementById('name');
             if (input.value && userId) {
                 await addDoc(collection(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`), { name: input.value });
@@ -129,6 +66,55 @@
             if (userId) await deleteDoc(doc(db, `artifacts/${firebaseConfig.appId}/users/${userId}/pickleball_players`, id));
         };
 
+        const generateSchedule = () => {
+            const r = parseInt(document.getElementById('num-matches').value);
+            const players = window.appState.players.map(p => p.name);
+            if (players.length < 4) return;
+
+            const schedule = [];
+            let pool = [...players];
+            for (let i = 0; i < r; i++) {
+                let p = [...pool];
+                schedule.push({ round: i + 1, teamA: [p[0], p[2]], teamB: [p[1], p[3]] });
+                // Advanced rotation for variety
+                let first = pool.shift();
+                pool.push(first);
+                if (i % 2 === 0) pool.push(pool.shift());
+            }
+            window.appState.schedule = schedule;
+            renderSchedule();
+            calculateVariety();
+        };
+
+        // --- 3. RENDERING ---
+        const renderPlayers = () => {
+            document.getElementById('player-list').innerHTML = window.appState.players.map(p => `
+                <div class="flex justify-between p-2.5 bg-white border rounded-xl mb-1.5 text-xs font-bold shadow-sm">
+                    ${p.name} <button onclick="deletePlayer('${p.id}')" class="text-rose-400 px-2 font-black">✕</button>
+                </div>`).join('');
+        };
+
+        const renderSchedule = () => {
+            const playerNames = window.appState.players.map(p => p.name);
+            document.getElementById('schedule-container').innerHTML = window.appState.schedule.map(m => {
+                const active = [...m.teamA, ...m.teamB];
+                const resting = playerNames.filter(name => !active.includes(name));
+                return `
+                <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-3">
+                    <div class="flex justify-between text-[10px] font-black text-slate-400 mb-2 uppercase">
+                        <span>Round ${m.round}</span>
+                        ${resting.length ? `<span class="text-amber-600 bg-amber-50 px-2 rounded-full">Wait: ${resting.join(', ')}</span>` : ''}
+                    </div>
+                    <div class="flex justify-between items-center text-xs font-bold text-indigo-900 px-1">
+                        <span class="w-[45%] text-right">${m.teamA.join(' & ')}</span>
+                        <span class="text-slate-300 font-normal mx-2">vs</span>
+                        <span class="w-[45%] text-left">${m.teamB.join(' & ')}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        };
+
+        // --- 4. STARTUP & EVENT LISTENERS ---
         onAuthStateChanged(auth, (u) => {
             if (u) {
                 userId = u.uid;
@@ -153,25 +139,31 @@
                 });
             } else { signInAnonymously(auth); }
         });
+
+        // CONNECT BUTTONS VIA EVENT LISTENERS (Reliable)
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('player-form').addEventListener('submit', addPlayer);
+            document.getElementById('gen-btn').addEventListener('click', generateSchedule);
+        });
     </script>
 </head>
-<body class="bg-slate-50 p-4 font-sans text-slate-800">
+<body class="bg-slate-50 p-4 font-sans text-slate-800 antialiased">
     <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-6">
         <div class="md:col-span-4 space-y-4">
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
                 <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">1. Players</h2>
-                <form onsubmit="window.addPlayer(event)" class="flex gap-2 mb-4">
-                    <input id="name" type="text" placeholder="Add name..." class="flex-grow p-3 bg-slate-50 rounded-xl text-sm outline-none ring-1 ring-slate-200">
-                    <button type="submit" class="bg-indigo-600 text-white px-5 rounded-xl font-bold">+</button>
+                <form id="player-form" class="flex gap-2 mb-4">
+                    <input id="name" type="text" placeholder="Add name..." class="flex-grow p-3 bg-slate-50 rounded-xl text-sm border-none ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button type="submit" class="bg-indigo-600 text-white px-5 rounded-xl font-bold hover:bg-indigo-700 transition-all">+</button>
                 </form>
                 <div id="player-list"></div>
             </div>
 
             <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
                 <h2 class="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">2. Setup</h2>
-                <input id="num-matches" type="number" class="w-full bg-slate-50 rounded-xl p-3 text-indigo-900 font-bold mb-2">
+                <input id="num-matches" type="number" class="w-full bg-slate-50 rounded-xl p-3 text-indigo-900 font-bold outline-none ring-1 ring-slate-200">
                 <div id="hint-area"></div>
-                <button onclick="window.generateSchedule()" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] mt-4 shadow-lg active:scale-95 transition-all">Generate Schedule</button>
+                <button id="gen-btn" class="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl uppercase text-[10px] mt-4 shadow-lg active:scale-95 transition-all">Generate Schedule</button>
             </div>
 
             <div class="bg-indigo-900 text-white p-6 rounded-[2rem] shadow-xl">
@@ -179,7 +171,6 @@
                 <div id="variety-stats" class="space-y-1">
                     <p class="text-[10px] opacity-50 italic">Generate schedule to see stats...</p>
                 </div>
-                <p class="text-[9px] mt-4 opacity-40 font-mono">Legend: [Initial]:[Times Partnered]</p>
             </div>
         </div>
 
