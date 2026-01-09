@@ -45,91 +45,86 @@
             });
         }
 
-        window.updateMatchHint = function() {
-            const n = window.appState.players.length;
-            const courts = parseInt(document.getElementById('num-courts').value) || 1;
-            const hintDiv = document.getElementById('match-hint');
-            if (n < 4) { hintDiv.innerHTML = ""; return; }
-            
-            const fullVariety = Math.ceil((n * (n - 1)) / 4);
-            let suggestCount = (courts === 1) ? Math.min(fullVariety, 15) : Math.min(fullVariety, 16);
-            let pointGoal = (courts === 1) ? "7 points" : "11 points";
-
-            hintDiv.innerHTML = `
-                <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2 space-y-1 text-[11px]">
-                    <p class="text-indigo-900 font-bold">Math Goal: ${fullVariety} matches for full variety.</p>
-                    <p class="text-emerald-700 font-black italic">Recommended: ${suggestCount} matches @ ${pointGoal} (2 hours).</p>
-                </div>`;
-        }
+       window.updateMatchHint = function() {
+    const n = window.appState.players.length;
+    const hintDiv = document.getElementById('match-hint');
+    if (n < 4) { hintDiv.innerHTML = ""; return; }
+    
+    // For Individual Round Robin, perfect variety usually takes N-1 rounds
+    const perfectRounds = n % 4 === 0 ? n - 1 : n;
+    
+    hintDiv.innerHTML = `
+        <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-2 text-[11px]">
+            <p class="text-indigo-900 font-bold">Fairness Alert:</p>
+            <p class="text-gray-600">To ensure everyone partners with everyone else exactly once, set matches to <b>${perfectRounds}</b>.</p>
+        </div>`;
+}
 
 window.generateSchedule = function() {
     if (window.appState.isLocked) return;
     
     const playerNames = window.appState.players.map(p => p.name);
-    const numPlayers = playerNames.length;
-    const roundsTarget = parseInt(document.getElementById('num-matches').value) || 12;
+    // Ensure we have a multiple of 4 for perfect fairness, or add "BYE" for resting
+    let pool = [...playerNames].sort(() => Math.random() - 0.5);
+    while (pool.length % 4 !== 0) {
+        pool.push("BYE (Rest)");
+    }
+
+    const n = pool.length;
+    const roundsTarget = parseInt(document.getElementById('num-matches').value) || (n - 1);
     const courts = parseInt(document.getElementById('num-courts').value) || 1;
     const newSchedule = [];
 
-    // --- CASE 1: THE PERFECT 8-PLAYER MATRIX ---
-    if (numPlayers === 8) {
-        const matrix8 = [
-            [[0, 1], [2, 3]], [[4, 5], [6, 7]],
-            [[0, 2], [4, 6]], [[1, 3], [5, 7]],
-            [[0, 3], [5, 6]], [[1, 2], [4, 7]],
-            [[0, 4], [1, 5]], [[2, 6], [3, 7]],
-            [[0, 5], [3, 4]], [[1, 6], [2, 7]],
-            [[0, 6], [1, 7]], [[2, 4], [3, 5]],
-            [[0, 7], [1, 2]], [[3, 6], [4, 5]]
-        ];
+    // The "Whist" Rotation Logic: Fix first player, rotate others
+    let positions = Array.from({length: n}, (_, i) => i);
 
-        const shuffled = [...playerNames].sort(() => Math.random() - 0.5);
+    for (let r = 0; r < roundsTarget; r++) {
+        let roundMatchups = [];
+        
+        // Create table pairings for this rotation
+        // Standard Whist: (i) & (i + n/2) vs (i + n/4) & (i + 3n/4)
+        for (let i = 0; i < n / 4; i++) {
+            const idx1 = positions[i];
+            const idx2 = positions[i + n/2];
+            const idx3 = positions[i + n/4];
+            const idx4 = positions[i + 3*n/4];
 
-        for (let i = 0; i < roundsTarget; i++) {
-            const match = matrix8[i % matrix8.length];
+            const p1 = pool[idx1], p2 = pool[idx2], p3 = pool[idx3], p4 = pool[idx4];
+
+            // Only add the match if it's not a "BYE" match
+            if (p1 !== "BYE (Rest)" && p2 !== "BYE (Rest)" && p3 !== "BYE (Rest)" && p4 !== "BYE (Rest)") {
+                roundMatchups.push({ teamA: [p1, p2], teamB: [p3, p4] });
+            }
+        }
+
+        // Distribute round matchups to available courts
+        for (let c = 0; c < roundMatchups.length; c++) {
+            if (c >= courts) break; // Don't exceed court capacity for the round
+            
+            const match = roundMatchups[c];
             newSchedule.push({
-                id: `${i + 1}`, round: i + 1, court: 1,
-                teamA: [shuffled[match[0][0]], shuffled[match[0][1]]],
-                teamB: [shuffled[match[1][0]], shuffled[match[1][1]]],
-                scoreA: null, scoreB: null
+                id: `${r + 1}-${c + 1}`,
+                round: r + 1,
+                court: c + 1,
+                teamA: match.teamA,
+                teamB: match.teamB,
+                scoreA: null,
+                scoreB: null
             });
         }
-    } 
-    // --- CASE 2: UNIVERSAL CIRCLE METHOD (Any other number) ---
-    else {
-        let pool = [...playerNames];
-        if (numPlayers % 2 !== 0) pool.push("BYE");
-        const n = pool.length;
-        let positions = Array.from({length: n}, (_, i) => i);
 
-        for (let r = 0; r < roundsTarget; r++) {
-            let pairs = [];
-            for (let i = 0; i < n / 2; i++) {
-                let p1 = pool[positions[i]];
-                let p2 = pool[positions[n - 1 - i]];
-                if (p1 !== "BYE" && p2 !== "BYE") pairs.push([p1, p2]);
-            }
-
-            for (let c = 1; c <= courts; c++) {
-                if (pairs.length < 2) break;
-                newSchedule.push({
-                    id: `${r + 1}-${c}`, round: r + 1, court: c,
-                    teamA: pairs.shift(), teamB: pairs.shift(),
-                    scoreA: null, scoreB: null
-                });
-            }
-
-            // Rotate circle: fix index 0, shift others
-            let rest = positions.slice(1);
-            rest.unshift(rest.pop());
-            positions = [positions[0], ...rest];
-        }
+        // --- THE FAIR ROTATION ---
+        // Keep index 0 fixed, move all others one spot clockwise
+        let rest = positions.slice(1);
+        rest.unshift(rest.pop());
+        positions = [positions[0], ...rest];
     }
 
     window.appState.schedule = newSchedule;
     window.appState.isLocked = true;
     document.getElementById('gen-btn').disabled = true;
     renderSchedule();
+    calculateStandings(); // Initialize standings with 0s
 };
 
         window.swapPlayer = function(matchId, playerName, fromTeam) {
